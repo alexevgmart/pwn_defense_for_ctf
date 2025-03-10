@@ -1,13 +1,10 @@
 #include "strings.h"
 
-char* (*original_strcpy)(char *restrict dst, const char *restrict src) = NULL;
-
 char *strcpy(char *restrict dst, const char *restrict src) {
     size_t size = malloced_contains(dst);
-    char* result;
 
     if (size) {
-        result = strncpy(dst, src, size + 1);
+        memcpy(dst, src, size + 1);
         dst[size] = 0;
     }
     else {
@@ -18,15 +15,21 @@ char *strcpy(char *restrict dst, const char *restrict src) {
         while (!*(dst + len))
             len++;
 
-        if (!len)
-            goto exit;
+        if (!len) { // у этой переменной есть данные на стеке
+            for (int i = 0; i < strlen(src); i++) {
+                if ((src[i] < 0x20 && (src[i] < 0x07 || src[i] > 0x0d)) || src[i] > 0x7e) {
+                    goto exit;
+                }
+                len++;
+            }
+        }
 
-        len = strlen(src) > len ? len : strlen(src);
+        len = strlen(src) > len ? len : strlen(src); // может работать неправильно, если в переменной остался мусор
 
 exit:
-        result = strncpy(dst, src, len + 1);
+        memcpy(dst, src, len + 1);
         dst[len] = 0;
     }
 
-    return result;
+    return dst;
 }

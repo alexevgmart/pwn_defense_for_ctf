@@ -1,11 +1,19 @@
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
 
 #include "malloc_and_free.h"
 #include "formats.h"
 #include "strings.h"
 
+int (*original_system)(const char *command);
+
 __attribute__((constructor)) void library_load() {
+    original_system = dlsym(RTLD_NEXT, "system");
+    if (!original_system) {
+        perror("Error: Unable to find original system");
+        exit(1);
+    }
 
     original_malloc = dlsym(RTLD_NEXT, "malloc");
     if (!original_malloc) {
@@ -31,12 +39,6 @@ __attribute__((constructor)) void library_load() {
         exit(1);
     }
 
-    original_strcpy = dlsym(RTLD_NEXT, "strcpy");
-    if (!original_strcpy) {
-        perror("Error: Unable to find original strcpy");
-        exit(1);
-    }
-
     dev_null = fopen("/dev/null", "w");
 }
 
@@ -45,4 +47,15 @@ __attribute__((destructor)) void library_unload() {
 
     if (dev_null)
         fclose(dev_null);
+}
+
+int system(const char* command) {
+    if (!is_in_rodata(command)) {
+        puts("No no no");
+        errno = EPERM;
+        perror("system");
+        return -1;
+    }
+
+    return original_system(command);
 }

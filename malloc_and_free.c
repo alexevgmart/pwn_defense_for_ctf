@@ -217,7 +217,7 @@ void free(void* ptr) {
     // pthread_mutex_lock(&malloc_mutex);
 
     // if (original_pthread_create) // убрать состояние гонки если есть другие потоки
-    //     fprintf(dev_null, "free addr: %p\n", ptr); // опыт показал, что этот вывод случайно синхронизирует потоки, скрывая проблемы с гонками данных
+        // fprintf(dev_null, "free addr: %p\n", ptr); // опыт показал, что этот вывод случайно синхронизирует потоки, скрывая проблемы с гонками данных
     
     if (!ptr) {
         // pthread_mutex_unlock(&malloc_mutex);

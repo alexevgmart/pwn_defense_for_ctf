@@ -11,7 +11,7 @@ rm malloc_and_free.o formats.o strings.o main.o
 file_name="$1"
 
 if [[ "$file_name" == *.c ]]; then
-    gcc "$file_name" -o "${file_name%.c}"
+    gcc "$file_name" -g -o "${file_name%.c}"
     file_name="${file_name%.c}"
 fi
 
