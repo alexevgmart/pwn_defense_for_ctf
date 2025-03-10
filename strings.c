@@ -18,8 +18,12 @@ char *strcpy(char *restrict dst, const char *restrict src) {
         while (!*(dst + len))
             len++;
 
+        if (!len)
+            goto exit;
+
         len = strlen(src) > len ? len : strlen(src);
 
+exit:
         result = strncpy(dst, src, len + 1);
         dst[len] = 0;
     }
