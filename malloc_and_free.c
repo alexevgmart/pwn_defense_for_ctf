@@ -141,6 +141,7 @@ void* malloc(size_t size) {
     malloced_insert(addr, size);
     delete_freed_addr(addr);
     // pthread_mutex_unlock(&malloc_mutex);
+    // print_malloced();
     return addr;
 }
 
