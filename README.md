@@ -7,7 +7,7 @@
 ---
 
 Добавлен модуль для ядра Линукс, который будет перехватывать системные вызовы sys_read и sys_write, чтобы нельзя было писать или читать non printable символы.
-Для запуска [kernel_module]([https://github.com/alexevgmart/pwn_defense_for_ctf/kernel_module](https://github.com/alexevgmart/pwn_defense_for_ctf/tree/main/kernel_module)) необходимо выолпнить:
+Для запуска [kernel_module](https://github.com/alexevgmart/pwn_defense_for_ctf/tree/main/kernel_module) необходимо выолпнить:
 ```shell
 sudo apt install build-essential linux-headers-$(uname -r)
 make
