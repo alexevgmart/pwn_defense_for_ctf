@@ -18,6 +18,8 @@
 
 #include "ftrace_helper.h"
 
+#define NETLINK_MY_GROUP 18
+
 
 typedef struct proto_msg {
     pid_t pid;
@@ -174,6 +176,11 @@ static void netlink_send_msg(const char *data, uint64_t data_size, bool std, boo
     nlh = nlmsg_put(skb_out, 0, 0, NLMSG_DONE, sizeof(proto_msg), 0);
     memcpy(nlmsg_data(nlh), msg, sizeof(proto_msg));
 
+    // res = nlmsg_multicast(nl_sock, skb_out, 0, NETLINK_MY_GROUP, GFP_KERNEL);
+    // if (res < 0) {
+    //     printk(KERN_INFO "netlink: Error while sending skb to user\n");
+    // }
+
     pid_t server_monitor_pid = -1;
     server_monitor_pid = get_pid_by_name(server_monitor);
     if (server_monitor_pid == -1) {
@@ -181,7 +188,9 @@ static void netlink_send_msg(const char *data, uint64_t data_size, bool std, boo
         return;
     }
     else {
+        pr_info("monitor pid: %d", server_monitor_pid);
         res = nlmsg_unicast(nl_sock, skb_out, server_monitor_pid);
+        // res = nlmsg_multicast(nl_sock, skb_out, 0, NETLINK_MY_GROUP, GFP_KERNEL);
         if (res < 0) {
             printk(KERN_INFO "netlink: Error while sending skb to user\n");
         }
@@ -258,9 +267,9 @@ next_check_read:
                 return ret_val;
             }
 
-            netlink_send_msg(data, count, false, false);
+            netlink_send_msg(data, ret_val, false, false);
 
-            for (int i = 0; i < count; i++) {
+            for (int i = 0; i < ret_val; i++) {
                 if ((data[i] < 0x20 && (data[i] < 0x07 || data[i] > 0x0d)) || data[i] > 0x7e) {
                     data[i] = 0;
                 }

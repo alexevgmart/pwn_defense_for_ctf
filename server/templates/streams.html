@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streams</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            color: #2c5f2d;
+            margin-bottom: 20px;
+        }
+        .stream-list {
+            width: 80%;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .stream-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            padding: 10px;
+            background-color: #e0ffe0;
+            border: 1px solid #b3e6b3;
+            border-radius: 4px;
+            color: #2c5f2d;
+            text-decoration: none;
+            font-size: 16px;
+            transition: background-color 0.3s ease, border-color 0.3s ease;
+        }
+        .stream-item:hover {
+            background-color: #b3e6b3;
+            border-color: #2c5f2d;
+        }
+        .stream-item a {
+            text-decoration: none;
+            color: inherit;
+            flex-grow: 1;
+        }
+        .flags-container {
+            display: flex;
+            gap: 5px;
+        }
+        .flag-text {
+            padding: 5px 10px;
+            background-color: #fff3cd;
+            border: 1px solid #ffeeba;
+            border-radius: 4px;
+            color: #856404;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Streams</h1>
+    <div class="stream-list">
+        {% for stream in streams %}
+            <a href="/streams/{{ stream.id }}" class="stream-item">
+                <span>Stream {{ stream.id }}</span>
+                <div class="flags-container">
+                    {% for flag in stream.flags %}
+                        <div class="flag-text">
+                            {{ flag }}
+                        </div>
+                    {% endfor %}
+                </div>
+            </a>
+        {% endfor %}
+    </div>
+</body>
+</html>
