@@ -2,48 +2,68 @@ import socket
 import base64
 import struct
 import json
-import asyncio
-
-from config import config
-
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+import os
+import re
+from sqlalchemy import create_engine, Column, Integer, Text, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Column, Integer, Text, text
+from dotenv import load_dotenv
+
+load_dotenv()
+
+TCP_PORT = int(os.environ.get('TCP_PORT', 8081))
+DB_URL = os.environ['DB_URL']
+EDITABLE_DIRECTORY = os.environ['EDITABLE_DIRECTORY']
 
 Base = declarative_base()
+
 class Streams(Base):
     __tablename__ = 'streams'
-
     id = Column(Integer, primary_key=True, autoincrement=True)
     stream = Column(Text, nullable=False)
 
+# Синхронный движок и сессия
+engine = create_engine(DB_URL, echo=True)
+SessionLocal = sessionmaker(bind=engine)
 
-engine = create_async_engine(config['db_url_tcp'], echo=True)
-AsyncSessionLocal = sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
+# Функции для работы с паттернами
+def load_banned_patterns():
+    patterns = []
+    for filename in os.listdir(EDITABLE_DIRECTORY):
+        if filename.endswith('.json'):
+            try:
+                with open(os.path.join(EDITABLE_DIRECTORY, filename), 'r') as f:
+                    pattern = json.load(f)
+                    if not all(key in pattern for key in ['pattern', 'flag', 'std', 'active', 'action']):
+                        continue
+                    if pattern['action'] != 'ban' or pattern['active'] != True:
+                        continue
+                    try:
+                        re.compile(pattern['pattern'])
+                        patterns.append(pattern)
+                    except:
+                        continue
+            except Exception as e:
+                print(f"Error loading pattern {filename}: {e}")
+    return patterns
 
-async def create_tables():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+def create_tables():
+    Base.metadata.create_all(bind=engine)
 
-async def insert_stream(stream):
-    async with AsyncSessionLocal() as session:
+def insert_stream(stream):
+    session = SessionLocal()
+    try:
         new_stream = Streams(stream=stream)
         session.add(new_stream)
-        await session.commit()
+        session.commit()
+    finally:
+        session.close()
 
-
-async def start_server(host='0.0.0.0', port=config['tcp_port']):
-    await create_tables()
+def start_server(host='0.0.0.0', port=TCP_PORT):
+    create_tables()
 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    
     server_socket.bind((host, port))
-    
     server_socket.listen(5)
     print(f"Сервер запущен на {host}:{port}")
 
@@ -55,7 +75,7 @@ async def start_server(host='0.0.0.0', port=config['tcp_port']):
         while True:
             try:
                 std_data = client_socket.recv(1)
-                if not std_data:
+                if not std_data or std_data == b'\xff':
                     break
 
                 data_len_data = client_socket.recv(8)
@@ -70,23 +90,42 @@ async def start_server(host='0.0.0.0', port=config['tcp_port']):
 
                 std = std_data[0]
                 data = base64.b64encode(data).decode()
-                # print(f"Получено сообщение: std={std}, data_len={data_len}, data={data}")
                 stream.append([std, data_len, data])
 
             except Exception as e:
                 print(f"Ошибка при обработке данных: {e}")
                 break
 
+        stream_to_db = base64.b64encode(str(json.dumps(stream)).encode())
+        insert_stream(stream_to_db)
+
+        banned_patterns = load_banned_patterns()
+        client_socket.send(bytes([len(banned_patterns)]))
+
+        if len(banned_patterns) == 0:
+            client_socket.close()
+            continue
+
+        for item in banned_patterns:
+            if item['std'] in [0, 1]:
+                client_socket.send(bytes([item['std']]))
+            else:
+                client_socket.send(bytes([2]))
+            client_socket.send(bytes([len(item['pattern'])]))
+            client_socket.send(item['pattern'].encode())
+
         client_socket.close()
-        # print(f"Клиент {client_address} отключился")
-        stream_to_db = base64.b64encode(str(json.dumps(stream)).encode()) # так будут храниться в бд
-        await insert_stream(stream_to_db)
 
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(text(f'SELECT COUNT(*) FROM streams'))
+        session = SessionLocal()
+        try:
+            result = session.execute(text('SELECT COUNT(*) FROM streams'))
             print('number of streams: ', result.scalar())
-
-        # print(json.loads(base64.b64decode(stream_to_db).decode())) # такие будут отправляться на фронт
+        finally:
+            session.close()
 
 if __name__ == "__main__":
-    asyncio.run(start_server())
+    while True:
+        try:
+            start_server()
+        except Exception as ex:
+            print(f'error: {ex}')

@@ -6,6 +6,7 @@
 #include <linux/namei.h>
 #include <linux/slab.h>   // Для kmalloc и kfree
 #include <linux/sched.h>  // Для current и task_struct
+#include <linux/wait.h>
 #include <linux/mm.h>     // Для mm_struct
 #include <linux/string.h>
 
@@ -15,6 +16,7 @@
 #include <linux/skbuff.h>
 #include <linux/notifier.h>
 #include <linux/signal.h>
+#include <linux/delay.h>
 
 #include "ftrace_helper.h"
 
@@ -38,6 +40,10 @@ typedef struct current_process {
 } current_process;
 
 current_process* processes = NULL;
+bool non_printable_block = true;
+
+static DECLARE_WAIT_QUEUE_HEAD(nl_wait_queue);
+static atomic_t data_ready = ATOMIC_INIT(0);
 
 struct sock *nl_sock = NULL;
 
@@ -198,19 +204,36 @@ static void netlink_send_msg(const char *data, uint64_t data_size, bool std, boo
 }
 
 // Функция для обработки входящих сообщений
-static void netlink_test_recv_msg(struct sk_buff *skb) {
+static void netlink_recv_msg(struct sk_buff *skb) {
     struct nlmsghdr *nlh;
     char *msg;
     int msg_size;
 
     nlh = (struct nlmsghdr *)skb->data;
     msg = (char *)nlmsg_data(nlh);
-    msg_size = strlen(msg);
 
-    printk(KERN_INFO "netlink: Received message: %s\n", msg);
+    if (*msg == 0xff)
+        non_printable_block = true;
+    else if (*msg == 0x7f)
+        non_printable_block = false;
+    else
+        printk(KERN_INFO "netlink: Received message: %s\n", msg);
 
-    // Отправляем ответ всем подписанным процессам
-    netlink_send_msg(msg, msg_size, false, false);
+    atomic_set(&data_ready, 1);
+    wake_up_all(&nl_wait_queue);
+}
+
+// ожидаем ответ пользовательской программы
+void wait_for_user(void) {
+    DEFINE_WAIT(wait);
+
+    prepare_to_wait(&nl_wait_queue, &wait, TASK_INTERRUPTIBLE);
+    while (!atomic_read(&data_ready)) {
+        schedule(); // Добровольно уступаем процессор
+    }
+    finish_wait(&nl_wait_queue, &wait);
+    
+    atomic_set(&data_ready, 0);
 }
 
 asmlinkage int hook_read(const struct pt_regs *regs) {
@@ -268,10 +291,13 @@ next_check_read:
             }
 
             netlink_send_msg(data, ret_val, false, false);
+            wait_for_user();
 
-            for (int i = 0; i < ret_val; i++) {
-                if ((data[i] < 0x20 && (data[i] < 0x07 || data[i] > 0x0d)) || data[i] > 0x7e) {
-                    data[i] = 0;
+            if (non_printable_block) {
+                for (int i = 0; i < ret_val; i++) {
+                    if ((data[i] < 0x20 && (data[i] < 0x07 || data[i] > 0x0d)) || data[i] > 0x7e) {
+                        data[i] = 0;
+                    }
                 }
             }
 
@@ -330,11 +356,13 @@ next_check_write:
             }
             
             netlink_send_msg(data, count, true, false);
-            // pr_info("sending: %s", data);
+            wait_for_user();
 
-            for (int i = 0; i < count; i++) {
-                if ((data[i] < 0x20 && (data[i] < 0x07 || data[i] > 0x0d)) || data[i] > 0x7e) {
-                    data[i] = 0;
+            if (non_printable_block) {
+                for (int i = 0; i < count; i++) {
+                    if ((data[i] < 0x20 && (data[i] < 0x07 || data[i] > 0x0d)) || data[i] > 0x7e) {
+                        data[i] = 0;
+                    }
                 }
             }
 
@@ -434,7 +462,7 @@ static int __init interception_init(void) {
         return err;
 
     struct netlink_kernel_cfg cfg = {
-        .input = netlink_test_recv_msg,
+        .input = netlink_recv_msg,
     };
 
     nl_sock = netlink_kernel_create(&init_net, NETLINK_USERSOCK, &cfg);

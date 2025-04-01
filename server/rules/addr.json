@@ -1,0 +1,7 @@
+{
+    "pattern": "0x[a-f0-9]+",
+    "flag": "addr",
+    "std": null,
+    "active": true,
+    "action": "mark"
+}

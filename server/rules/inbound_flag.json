@@ -1,0 +1,7 @@
+{
+    "pattern": "[A-Z0-9]{31}=",
+    "flag": "inbound_flag",
+    "std": 0,
+    "active": true,
+    "action": "mark"
+}

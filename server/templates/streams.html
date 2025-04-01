@@ -15,6 +15,28 @@
             color: #2c5f2d;
             margin-bottom: 20px;
         }
+        .header-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .editor-btn {
+            padding: 8px 16px;
+            background-color: #4a6fa5;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .editor-btn:hover {
+            background-color: #3a5a8a;
+        }
         .stream-list {
             width: 80%;
             max-width: 600px;
@@ -62,10 +84,14 @@
     </style>
 </head>
 <body>
-    <h1>Streams</h1>
+    <div class="header-container">
+        <h1>Streams</h1>
+        <a href="/editor" class="editor-btn">Go to Editor</a>
+        <!-- <a href="/editor" target="_blank" class="editor-btn">Go to Editor</a> -->
+    </div>
     <div class="stream-list">
         {% for stream in streams %}
-            <a href="/streams/{{ stream.id }}" class="stream-item">
+            <a href="/streams/{{ stream.id }}" class="stream-item" target="_blank" rel="noopener noreferrer">
                 <span>Stream {{ stream.id }}</span>
                 <div class="flags-container">
                     {% for flag in stream.flags %}

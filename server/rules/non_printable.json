@@ -1,0 +1,8 @@
+{
+  "pattern": "non_printable_bytes_block",
+  "flag": "non_printable",
+  "std": null,
+  "active": true,
+  "action": "ban",
+  "WARNING": "YOU MAY MODIFY ONLY 'ACTIVE' HERE, IN OTHER CASES IT WILL NOT WORK CORRECTLY"
+}

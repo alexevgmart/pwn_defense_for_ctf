@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <sys/socket.h>
 #include <linux/netlink.h>
+#include <regex.h>
 
 #include <sys/types.h>
 #include <signal.h>
@@ -40,10 +41,19 @@ typedef struct process {
     struct process* prev;
 } process;
 
+typedef struct banned {
+    uint8_t std;
+    uint8_t pattern_len;
+    char* pattern;
+} banned;
+
 char* server_ip;
 int server_port;
+int module_sock_fd;
 
 process* processes = NULL;
+banned* banned_patterns = NULL;
+uint8_t number_of_banned_patterns = 0;
 
 
 // Добавление нового сообщения определенному процессу
@@ -125,6 +135,55 @@ void print_process(process* current_process) {
     }
 }
 
+// отправляем один байт в модуль ядра (банить non printable или нет)
+int send_byte_to_kernel(bool banned) {
+    struct sockaddr_nl src_addr, dest_addr;
+    struct nlmsghdr *nlh = NULL;
+    struct iovec iov;
+    struct msghdr msg;
+    int ret = -1;
+
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.nl_family = AF_NETLINK;
+    dest_addr.nl_pid = 0;
+    dest_addr.nl_groups = 0;
+
+    nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(1));
+    if (!nlh) {
+        perror("malloc");
+        goto cleanup;
+    }
+    memset(nlh, 0, NLMSG_SPACE(1));
+
+    nlh->nlmsg_len = NLMSG_SPACE(1);
+    nlh->nlmsg_pid = getpid();
+    nlh->nlmsg_flags = 0;
+
+    if (banned)
+        *((unsigned char *)NLMSG_DATA(nlh)) = 0xff;
+    else 
+        *((unsigned char *)NLMSG_DATA(nlh)) = 0x7f;
+
+    iov.iov_base = (void *)nlh;
+    iov.iov_len = nlh->nlmsg_len;
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_name = (void *)&dest_addr;
+    msg.msg_namelen = sizeof(dest_addr);
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+
+    if (sendmsg(module_sock_fd, &msg, 0) < 0) {
+        perror("sendmsg");
+        goto cleanup;
+    }
+
+    ret = 0;
+
+cleanup:
+    if (nlh) free(nlh);
+    return ret;
+}
+
 // отправление данных на python сервер
 void send_to_python(process* current_process) {
     int sock;
@@ -165,6 +224,38 @@ void send_to_python(process* current_process) {
         }
 
         tmp = tmp->next;
+    }
+
+    uint8_t no_more_data = 0xff;
+    if (send(sock, &no_more_data, 1, 0) < 0) {
+        perror("send");
+        return;
+    }
+
+    number_of_banned_patterns;
+    if (recv(sock, &number_of_banned_patterns, 1, 0) < 0) {
+        perror("recv");
+        close(sock);
+        return;
+    }
+
+    if (number_of_banned_patterns == 0) {
+        close(sock);
+        return;
+    }
+
+    if (!banned_patterns) {
+        banned_patterns = calloc(number_of_banned_patterns * sizeof(banned), 1);
+    }
+    else {
+        banned_patterns = realloc(banned_patterns, number_of_banned_patterns * sizeof(banned));
+    }
+    for (int i = 0; i < number_of_banned_patterns; i++) {
+        recv(sock, &banned_patterns[i].std, 1, 0);
+        recv(sock, &banned_patterns[i].pattern_len, 1, 0);
+        banned_patterns[i].pattern = calloc(banned_patterns[i].pattern_len, 1);
+        recv(sock, banned_patterns[i].pattern, banned_patterns[i].pattern_len, 0);
+        // puts(banned_patterns[i].pattern);
     }
 
     close(sock);
@@ -241,6 +332,47 @@ void add_msg_or_process(proto_msg* msg) {
     }
 }
 
+// kill процесс если там есть забаненный паттерн
+void check_ban(char* data, pid_t pid, uint8_t std) {
+    bool ban_non_printable = false;
+
+    if (!banned_patterns) {
+        send_byte_to_kernel(ban_non_printable);
+        return;
+    }
+
+    for (int i = 0; i < number_of_banned_patterns; i++) {
+        if (banned_patterns[i].std != 2 && std != banned_patterns[i].std)
+            continue;
+
+        if (strstr(banned_patterns[i].pattern, "non_printable_bytes_block")) {
+            ban_non_printable = true;
+            continue;
+        }
+
+        regex_t regex;
+        regmatch_t matches[1];
+        int ret;
+
+        ret = regcomp(&regex, banned_patterns[i].pattern, REG_EXTENDED);
+        if (ret != 0) {
+            printf("Could not compile regex\n");
+            return;
+        }
+
+        ret = regexec(&regex, data, 1, matches, 0);
+        if (ret == 0) {
+            if (kill(pid, SIGKILL) == -1) {
+                perror("Ошибка при отправке SIGKILL");
+                return;
+            }
+        }
+
+        regfree(&regex);
+    }
+    send_byte_to_kernel(ban_non_printable);
+}
+
 // Функция для чтения сообщения от ядра
 void read_message(int sock)
 {
@@ -268,6 +400,8 @@ void read_message(int sock)
 
     proto_msg* data = (proto_msg*)NLMSG_DATA((struct nlmsghdr *)&buffer);
     // if (strlen(data->msg) > 0)
+    
+    check_ban(data->msg, data->pid, data->std);
     add_msg_or_process(data);
     // printf("std: %d, data: ", data->std);
     // for (int i = 0; i < data->msg_len; i++)
@@ -301,6 +435,7 @@ int main(int argc, char *argv[])
         perror("socket");
         return 1;
     }
+    module_sock_fd = sock_fd;
 
     // Заполняем адрес источника
     memset(&src_addr, 0, sizeof(src_addr));

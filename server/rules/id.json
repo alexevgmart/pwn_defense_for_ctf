@@ -1,0 +1,7 @@
+{
+  "pattern": "ID = [0-9]+",
+  "flag": "id",
+  "std": 1,
+  "active": true,
+  "action": "mark"
+}

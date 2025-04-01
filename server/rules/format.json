@@ -1,0 +1,7 @@
+{
+    "pattern": "%[0-9]+\\$",
+    "flag": "format",
+    "std": 0,
+    "active": true,
+    "action": "mark"
+} 
