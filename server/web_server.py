@@ -363,5 +363,26 @@ def export_text(id):
         if os.path.exists(filepath):
             os.remove(filepath)
 
+@app.route('/api/banned-patterns', methods=['GET'])
+# @site_login_required
+def get_banned_patterns():
+    banned_patterns = []
+    
+    for filename in os.listdir(EDITABLE_DIRECTORY):
+        if filename.endswith('.json'):
+            try:
+                with open(os.path.join(EDITABLE_DIRECTORY, filename), 'r') as f:
+                    pattern = json.load(f)
+                    if pattern.get('action') == 'ban' and pattern.get('active', False):
+                        banned_patterns.append(pattern)
+            except Exception as e:
+                print(f"Error loading pattern {filename}: {e}")
+                continue
+    
+    return jsonify({
+        'count': len(banned_patterns),
+        'banned_patterns': banned_patterns
+    })
+
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=WEB_PORT)
