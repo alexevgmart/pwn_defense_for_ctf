@@ -10,6 +10,7 @@ import re
 import hashlib
 from functools import wraps
 from dotenv import load_dotenv
+from tcp_server import insert_stream
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -107,6 +108,15 @@ def get_flags_in_stream(stream):
     for item in parsed_data:
         std, length, base64_str = item
         decoded_str = str(b64d(base64_str))[2:-1]
+
+        try:
+            if 'HTTP' in decoded_str.split('\\n')[1] and std == 0:
+                flags.add(decoded_str.split('\\n')[1].split('HTTP')[0])
+
+            if 'HTTP' in decoded_str.split('\\n')[0] and std == 1:
+                flags.add(decoded_str.split('\\n')[0].split(' ')[1])
+        except:
+            pass
 
         for pattern in patterns:
             if not pattern['active']:
@@ -383,6 +393,72 @@ def get_banned_patterns():
         'count': len(banned_patterns),
         'banned_patterns': banned_patterns
     })
+
+# @app.route('/api/new_stream', methods=['POST'])
+# def add_new_stream_to_db():
+#     try:
+#         data = json.loads(request.get_data(as_text=True))
+#         stream = []
+#         stream.append([data['request']['std'], data['request']['dataLen'], data['request']['data']])
+
+#         if data['response'] is not None:
+#             stream.append([data['response']['std'], data['response']['dataLen'], data['response']['data']])
+
+#         stream_to_db = base64.b64encode(str(json.dumps(stream)).encode())
+#         print(stream_to_db)
+#         insert_stream(stream_to_db)
+#     except:
+#         return '400', 400
+#     return '200', 200
+import json
+import base64
+from flask import request
+
+@app.route('/api/new_stream', methods=['POST'])
+def add_new_stream_to_db():
+    try:
+        # Получаем и парсим JSON
+        data = request.get_json()
+        if data is None:
+            return 'Invalid JSON', 400
+        
+        stream = []
+        
+        # Обрабатываем request
+        if 'request' not in data:
+            return 'Missing request data', 400
+            
+        req = data['request']
+        stream.append([
+            req.get('std'),
+            req.get('dataLen'),
+            req.get('data')
+        ])
+        
+        # Обрабатываем response (если есть)
+        if 'response' in data and data['response'] is not None:
+            resp = data['response']
+            stream.append([
+                resp.get('std'),
+                resp.get('dataLen'),
+                resp.get('data')
+            ])
+        
+        # Кодируем в base64
+        stream_str = json.dumps(stream)
+        stream_to_db = base64.b64encode(stream_str.encode('utf-8')).decode('utf-8')
+        
+        insert_stream(stream_to_db)
+        
+    except json.JSONDecodeError:
+        return 'Invalid JSON format', 400
+    except KeyError as e:
+        return f'Missing key: {str(e)}', 400
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        return 'Internal server error', 500
+        
+    return 'OK', 200
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=WEB_PORT)

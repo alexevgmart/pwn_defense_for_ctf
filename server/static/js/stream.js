@@ -34,18 +34,41 @@ function replaceNonPrintableChars(text) {
     return result;
 }
 
+function sanitizeHTTPText(text) {
+    // Удаляем \x0d в HTTP-тексте
+    if (text.includes('HTTP/1.1')) {
+        text = text.replace(/\\x0d/g, '').replace(/\r/g, '');
+    }
+    return text;
+}
+
+function escapeHtml(unsafe) {
+    // Безопасное экранирование HTML (защита от XSS)
+    return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
 function renderData() {
     container.innerHTML = ''; // Очищаем контейнер
-    let counter = 1; // Счетчик для нумерации сообщений
+    let counter = 1;
 
     decodedData.forEach(item => {
         const type = item[0] ? 'output' : 'input';
         let content = atob(item[2]);
 
-        if (isBytesMode) {
+        // Обработка HTTP-текста
+        if (content.includes('HTTP/')) {
+            content = sanitizeHTTPText(content);
+            content = escapeHtml(content);
+        } else if (isBytesMode) {
             content = textToHex(content);
         } else {
-            content = content.replace(/\n/g, '<br>');
+            content = escapeHtml(content)
+                .replace(/\n/g, '<br>');
             content = replaceNonPrintableChars(content);
         }
 
@@ -54,7 +77,7 @@ function renderData() {
         div.innerHTML = `<strong>[${counter}] ${type}:</strong><br>${content}<br><br>`;
         container.appendChild(div);
 
-        counter++; // Увеличиваем счетчик после каждого сообщения
+        counter++;
     });
 }
 

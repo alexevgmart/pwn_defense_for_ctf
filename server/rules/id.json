@@ -3,5 +3,5 @@
   "flag": "id",
   "std": 1,
   "active": true,
-  "action": "ban"
+  "action": "mark"
 }
