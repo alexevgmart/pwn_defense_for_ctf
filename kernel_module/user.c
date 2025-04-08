@@ -18,7 +18,7 @@
 
 typedef struct proto_msg {
     pid_t pid;
-    bool std; // 0 - stdin; 1 - stdout/stderr
+    uint8_t std; // 0 - stdin; 1 - stdout/stderr
     uint64_t counter;
     bool exited;
     uint64_t msg_len;
@@ -26,9 +26,10 @@ typedef struct proto_msg {
 } proto_msg;
 
 typedef struct data_struct {
-    bool std; // 0 - stdin; 1 - stdout/stderr
-    uint64_t data_len;
-    char* data;
+    uint8_t std; // 0 - stdin; 1 - stdout/stderr
+    bool exited;
+    uint64_t data_len; // добавить сюда exited, чтобы отправлять название файла который вышел
+    char* data;        // нужно сделать несколько имен в target_file
     struct data_struct* next;
     struct data_struct* prev;
 } data_struct;
@@ -65,6 +66,7 @@ void add_msg(process* current_process, proto_msg* msg) {
             return;
         }
         current_process->messages->std = msg->std;
+        current_process->messages->exited = msg->exited;
         current_process->messages->data_len = msg->msg_len;
         current_process->messages->data = malloc(msg->msg_len);
         if (!current_process->messages->data) {
@@ -77,7 +79,7 @@ void add_msg(process* current_process, proto_msg* msg) {
         current_process->last = current_process->messages;
     }
     else {
-        if (current_process->last->std == msg->std) {
+        if (current_process->last->std == msg->std && !msg->exited) {
             size_t new_data_len = current_process->last->data_len + msg->msg_len;
             char* tmp = calloc(new_data_len + 1, 1);
             if (!tmp) {
@@ -102,6 +104,7 @@ void add_msg(process* current_process, proto_msg* msg) {
                 return;
             }
             new_msg->std = msg->std;
+            new_msg->exited = new_msg->exited;
             new_msg->data_len = msg->msg_len;
             new_msg->data = calloc(msg->msg_len, 1);
             if (!new_msg->data) {
@@ -216,6 +219,7 @@ void send_to_python(process* current_process) {
         if (send(sock, &tmp->std, 1, 0) < 0) {
             perror("send");
         }
+
         if (send(sock, &tmp->data_len, sizeof(uint64_t), 0) < 0) {
             perror("send");
         }
@@ -226,11 +230,11 @@ void send_to_python(process* current_process) {
         tmp = tmp->next;
     }
 
-    uint8_t no_more_data = 0xff;
-    if (send(sock, &no_more_data, 1, 0) < 0) {
-        perror("send");
-        return;
-    }
+    // uint8_t no_more_data = 0xff;
+    // if (send(sock, &no_more_data, 1, 0) < 0) {
+    //     perror("send");
+    //     return;
+    // }
 
     number_of_banned_patterns;
     if (recv(sock, &number_of_banned_patterns, 1, 0) < 0) {
@@ -296,14 +300,16 @@ void add_msg_or_process(proto_msg* msg) {
 
     while (tmp) {
         if (tmp->pid == msg->pid) {
+            new = false;
+            add_msg(tmp, msg);
             if (msg->exited) {
                 // print_process(tmp);
                 send_to_python(tmp);
                 remove_process(tmp);
                 return;
             }
-            new = false;
-            add_msg(tmp, msg);
+            // new = false;
+            // add_msg(tmp, msg);
             break;
         }
 
@@ -379,7 +385,7 @@ void read_message(int sock)
     struct sockaddr_nl nladdr;
     struct msghdr msg;
     struct iovec iov;
-    char buffer[sizeof(proto_msg)];
+    char buffer[sizeof(proto_msg) + NLMSG_SPACE(0)];
     int ret;
 
     memset(buffer, 0, sizeof(buffer));
@@ -401,6 +407,7 @@ void read_message(int sock)
     proto_msg* data = (proto_msg*)NLMSG_DATA((struct nlmsghdr *)&buffer);
     // if (strlen(data->msg) > 0)
     
+    // printf("%s(pid: %d, counter: %ld, std: %02x)", data->msg, data->pid, data->counter, data->std);
     check_ban(data->msg, data->pid, data->std);
     add_msg_or_process(data);
     // printf("std: %d, data: ", data->std);

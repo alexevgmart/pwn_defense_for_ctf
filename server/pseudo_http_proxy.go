@@ -15,12 +15,13 @@ import (
 )
 
 type Pattern struct {
-	Pattern string `json:"pattern"`
-	Flag    string `json:"flag"`
-	Std     any    `json:"std"`
-	Active  bool   `json:"active"`
-	Action  string `json:"action"`
-	Warning string `json:"WARNING,omitempty"`
+	ServiceName string `json:"service"`
+	Pattern     string `json:"pattern"`
+	Flag        string `json:"flag"`
+	Std         any    `json:"std"`
+	Active      bool   `json:"active"`
+	Action      string `json:"action"`
+	Warning     string `json:"WARNING,omitempty"`
 }
 
 type Patterns struct {
@@ -28,8 +29,10 @@ type Patterns struct {
 	Count    int       `json:"count"`
 }
 
-func FindBannedPatterns(text string, std uint8) bool {
-	resp, err := http.Get("http://127.0.0.1:9002/api/banned-patterns")
+func FindBannedPatterns(text string, std uint8, service_name string) bool {
+	fmt.Println(service_name)
+	url := fmt.Sprintf("http://127.0.0.1:9002/api/banned-patterns?service_name=%s", service_name)
+	resp, err := http.Get(url)
 	if err != nil {
 		fmt.Printf("Error while request: %v\n", err)
 		return false
@@ -75,12 +78,13 @@ type Service struct {
 	ServiceAddr string `json:"service_addr"`
 	InPort      uint16 `json:"in_port"`
 	ServicePort uint16 `json:"service_port"`
+	IsHttp      bool   `json:"is_http"`
 }
 
 func ParseServices() map[string]Service {
-	data, err := os.ReadFile("http_services.json")
+	data, err := os.ReadFile("services.json")
 	if err != nil {
-		log.Fatalf("Couldn't read http_services.json file: %s", err.Error())
+		log.Fatalf("Couldn't read services.json file: %s", err.Error())
 	}
 
 	var services map[string]Service
@@ -93,44 +97,38 @@ func ParseServices() map[string]Service {
 }
 
 func StartPseudoProxy() {
-	// var wg sync.WaitGroup
-
 	for service_name, service_data := range ParseServices() {
-		// wg.Add(1)
-
-		go func() {
-			// defer wg.Done()
-
-			proxyAddr := fmt.Sprintf("0.0.0.0:%d", service_data.InPort)
-			listener, err := net.Listen("tcp", proxyAddr)
-			if err != nil {
-				log.Fatalf("Couldn't start server: %s", err.Error())
-			}
-			defer listener.Close()
-
-			fmt.Printf(
-				"Proxying service \"%s\" (0.0.0.0:%d -> %s:%d)\n",
-				service_name,
-				service_data.InPort,
-				service_data.ServiceAddr,
-				service_data.ServicePort,
-			)
-
-			for {
-				conn, err := listener.Accept()
+		if service_data.IsHttp {
+			go func() {
+				proxyAddr := fmt.Sprintf("0.0.0.0:%d", service_data.InPort)
+				listener, err := net.Listen("tcp", proxyAddr)
 				if err != nil {
-					log.Printf("Couldn't accept connection: %s", err.Error())
-					continue
+					log.Fatalf("Couldn't start server: %s", err.Error())
 				}
+				defer listener.Close()
 
-				go handleConnection(conn, service_data)
-			}
-		}()
+				fmt.Printf(
+					"Proxying service \"%s\" (0.0.0.0:%d -> %s:%d)\n",
+					service_name,
+					service_data.InPort,
+					service_data.ServiceAddr,
+					service_data.ServicePort,
+				)
+
+				for {
+					conn, err := listener.Accept()
+					if err != nil {
+						log.Printf("Couldn't accept connection: %s", err.Error())
+						continue
+					}
+
+					go handleConnection(conn, service_data, service_name)
+				}
+			}()
+		}
 	}
 
 	select {}
-
-	// wg.Wait()
 }
 
 func SendForbidden(conn net.Conn) {
@@ -151,11 +149,12 @@ type Data struct {
 }
 
 type Stream struct {
-	Request  *Data `json:"request"`
-	Response *Data `json:"response"`
+	Request     *Data  `json:"request"`
+	Response    *Data  `json:"response"`
+	ServiceName string `json:"service_name"`
 }
 
-func SendDataToServer(request *string, response *string) {
+func SendDataToServer(request *string, response *string, service_name string) {
 	decodedRequest, err := base64.StdEncoding.DecodeString(*request)
 	if err != nil {
 		log.Printf("Error while decoding request base64: %s", err.Error())
@@ -172,8 +171,9 @@ func SendDataToServer(request *string, response *string) {
 
 	if response == nil {
 		stream = Stream{
-			Request:  &requestStream,
-			Response: nil,
+			Request:     &requestStream,
+			Response:    nil,
+			ServiceName: service_name,
 		}
 	} else {
 		decodedResponse, err := base64.StdEncoding.DecodeString(*response)
@@ -189,8 +189,9 @@ func SendDataToServer(request *string, response *string) {
 		}
 
 		stream = Stream{
-			Request:  &requestStream,
-			Response: &responseStream,
+			Request:     &requestStream,
+			Response:    &responseStream,
+			ServiceName: service_name,
 		}
 	}
 
@@ -208,7 +209,7 @@ func SendDataToServer(request *string, response *string) {
 	resp.Body.Close()
 }
 
-func handleConnection(conn net.Conn, service_data Service) {
+func handleConnection(conn net.Conn, service_data Service, service_name string) {
 	defer conn.Close()
 
 	var requestData bytes.Buffer
@@ -231,7 +232,7 @@ func handleConnection(conn net.Conn, service_data Service) {
 		}
 	}
 	log.Println(strings.Split(requestData.String(), "\n")[0])
-	if FindBannedPatterns(requestData.String(), 0) {
+	if FindBannedPatterns(requestData.String(), 0, service_name) {
 		SendForbidden(conn)
 		return
 	}
@@ -246,29 +247,29 @@ func handleConnection(conn net.Conn, service_data Service) {
 	serviceConn, err := net.Dial("tcp", serviceAddr)
 	if err != nil {
 		log.Printf("Error connecting to service: %v", err)
-		SendDataToServer(&encodedRequestData, nil)
+		SendDataToServer(&encodedRequestData, nil, service_name)
 		return
 	}
 	defer serviceConn.Close()
 
 	if _, err := serviceConn.Write(requestData.Bytes()); err != nil {
 		log.Printf("Error sending to service: %v", err)
-		SendDataToServer(&encodedRequestData, nil)
+		SendDataToServer(&encodedRequestData, nil, service_name)
 		return
 	}
 
 	var responseData bytes.Buffer
 	if _, err := io.Copy(&responseData, serviceConn); err != nil {
 		log.Printf("Error reading response: %v", err)
-		SendDataToServer(&encodedRequestData, nil)
+		SendDataToServer(&encodedRequestData, nil, service_name)
 		return
 	}
-	if FindBannedPatterns(responseData.String(), 1) {
+	if FindBannedPatterns(responseData.String(), 1, service_name) {
 		SendForbidden(conn)
 		return
 	}
 	encodedResponseData := base64.StdEncoding.EncodeToString(responseData.Bytes())
-	SendDataToServer(&encodedRequestData, &encodedResponseData)
+	SendDataToServer(&encodedRequestData, &encodedResponseData, service_name)
 
 	if _, err := conn.Write(responseData.Bytes()); err != nil {
 		log.Printf("Error sending response: %v", err)

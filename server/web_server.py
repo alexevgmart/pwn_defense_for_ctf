@@ -1,5 +1,5 @@
 from flask import Flask, render_template, send_file, request, redirect, url_for, session, jsonify
-from sqlalchemy import create_engine, Column, Integer, Text, text
+from sqlalchemy import create_engine, Column, Integer, Text, text, String
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.future import select
@@ -8,17 +8,15 @@ import json
 import os
 import re
 import hashlib
+import base64
 from functools import wraps
 from dotenv import load_dotenv
-from tcp_server import insert_stream
 
-# Загрузка переменных окружения
 load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', os.urandom(32))
 
-# Конфигурация
 SITE_PASSWORD = hashlib.sha256(os.environ['SITE_PASSWORD'].encode()).hexdigest()
 EDITOR_PASSWORD = hashlib.sha256(os.environ['EDITOR_PASSWORD'].encode()).hexdigest()
 EDITABLE_DIRECTORY = os.environ.get('EDITABLE_DIRECTORY', './rules')
@@ -26,7 +24,6 @@ os.makedirs(EDITABLE_DIRECTORY, exist_ok=True)
 DB_URL = os.environ['DB_URL']
 WEB_PORT = int(os.environ.get('WEB_PORT', 8080))
 
-# Инициализация базы данных
 engine = create_engine(DB_URL, echo=True)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
@@ -35,9 +32,18 @@ class Streams(Base):
     __tablename__ = 'streams'
     id = Column(Integer, primary_key=True, autoincrement=True)
     stream = Column(Text, nullable=False)
+    service_name = Column(String(255), nullable=True)
 
-# Функции для работы с паттернами
-def load_patterns():
+def insert_stream(stream, service_name):
+    session = SessionLocal()
+    try:
+        new_stream = Streams(stream=stream, service_name=service_name)
+        session.add(new_stream)
+        session.commit()
+    finally:
+        session.close()
+
+def load_patterns(service_name):
     patterns = []
     for filename in os.listdir(EDITABLE_DIRECTORY):
         if filename.endswith('.json'):
@@ -45,18 +51,21 @@ def load_patterns():
                 with open(os.path.join(EDITABLE_DIRECTORY, filename), 'r') as f:
                     pattern = json.load(f)
                     # Валидация паттерна
-                    if not all(key in pattern for key in ['pattern', 'flag', 'std', 'active', 'action']):
+                    if not all(key in pattern for key in ['pattern', 'flag', 'std', 'active', 'action', 'service']):
                         continue
                     # if pattern['action'] != 'mark' or pattern['active'] != True:
                     if pattern['active'] != True:
                         continue
+                    if pattern['service'] != 'ALL' or service_name is not None or service_name != '':
+                        if pattern['service'] != service_name:
+                            continue
                     pattern['compiled'] = re.compile(pattern['pattern'])
                     patterns.append(pattern)
             except Exception as e:
                 print(f"Error loading pattern {filename}: {e}")
     return patterns
 
-# Декораторы для проверки авторизации
+
 def site_login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -73,7 +82,7 @@ def editor_login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# Маршруты авторизации
+
 @app.route('/login', methods=['GET', 'POST'])
 def site_login():
     if request.method == 'POST':
@@ -98,12 +107,12 @@ def logout():
     session.pop('editor_logged_in', None)
     return redirect(url_for('site_login'))
 
-# Функции для работы с потоками
-def get_flags_in_stream(stream):
-    patterns = load_patterns()  # Загружаем актуальные паттерны
+
+def get_flags_in_stream(stream, service_name):
+    patterns = load_patterns(service_name)  # Загружаем актуальные паттерны
     parsed_data = json.loads(b64d(stream).decode())
-    flags = set()
-    marks = set()
+    flags = {}
+    marks = {}
 
     for item in parsed_data:
         std, length, base64_str = item
@@ -111,10 +120,10 @@ def get_flags_in_stream(stream):
 
         try:
             if 'HTTP' in decoded_str.split('\\n')[1] and std == 0:
-                flags.add(decoded_str.split('\\n')[1].split('HTTP')[0])
+                flags[decoded_str.split('\\n')[1].split('HTTP')[0]] = None
 
             if 'HTTP' in decoded_str.split('\\n')[0] and std == 1:
-                flags.add(decoded_str.split('\\n')[0].split(' ')[1])
+                flags[decoded_str.split('\\n')[0].split(' ')[1]] = None
         except:
             pass
 
@@ -124,35 +133,51 @@ def get_flags_in_stream(stream):
 
             if pattern['compiled'].search(decoded_str):
                 if pattern['std'] is None or pattern['std'] == std:
-                    flags.add(pattern['flag'])
+                    flags[pattern['flag']] = None
                     if pattern['action'] == 'mark':
-                        marks.add(pattern['flag'])
+                        marks[pattern['flag']] = None
 
         try:
             b64d(base64_str).decode()
         except:
-            flags.add('non_printable')
+            flags['non_printable'] = None
 
     return {
-        'flags': list(flags),
-        'marks': list(marks)
+        'flags': list(flags.keys()),
+        'marks': list(marks.keys())
     }
 
-# Маршруты для работы с потоками
 @app.route('/')
+def index():
+    with open('services.json', 'r') as file:
+        services = json.load(file)
+    return render_template('services.html', services=services)
+
 @app.route('/streams', methods=['GET'])
 @site_login_required
 def get_streams():
     session_db = SessionLocal()
     try:
-        result = session_db.execute(text("SELECT id, stream FROM streams"))
+        service_name: str
+        if request.args.get('name') is None or request.args.get('name') == '':
+            result = session_db.execute(select(Streams.id, Streams.stream))
+            service_name = None
+        else:
+            result = session_db.execute(select(Streams.id, Streams.stream).where(Streams.service_name == request.args.get('name')))
+            service_name = request.args.get('name')
+
+            if service_name != '':
+                with open('services.json', 'r') as file:
+                    if not json.load(file)[service_name]['is_http']:
+                        service_name = 'PWN_ONLY'
+
         streams = result.fetchall()
 
         streams_data = []
         for row in streams:
             id, data = row
             try:
-                result = get_flags_in_stream(data)
+                result = get_flags_in_stream(data, service_name)
                 streams_data.append({
                     "id": id,
                     "flags": result['flags'],
@@ -182,7 +207,7 @@ def get_stream_by_id(id):
     finally:
         session_db.close()
 
-# Функции и маршруты для редактора JSON
+
 def get_json_files():
     return [f for f in os.listdir(EDITABLE_DIRECTORY) 
             if f.endswith('.json') and os.path.isfile(os.path.join(EDITABLE_DIRECTORY, f))]
@@ -293,7 +318,6 @@ def api_delete_file():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# Функции и маршруты для экспорта
 def should_print(text):
     pattern_flag = r'[A-Z0-9]{31}='
     pattern_addr = r'0x[a-f0-9]+'
@@ -319,6 +343,11 @@ def generate_export_data(id):
 
         file_data = 'import sys\nfrom pwn import *\n\n'
         file_data += 'io = remote(sys.argv[1], target_port)\n# io = process(["./binary_name"])\n\n'
+
+        # изменить на python requests
+        if re.search(r'[A-Z]+ /[^ ]* HTTP/', str(b64d(process[0][2]))[2:-1]) and process[0][0] == 0:
+            data_to_send = '\n'.join(b64d(process[0][2]).decode().split('\n')[1:])
+            return file_data + f"io.send(b'{str(data_to_send.encode())[2:-1]}')\n\nio.interactive()"
 
         if len(process) == 1 and process[0][0] == 0:
             return file_data + f"io.send(b'{str(b64d(process[0][2]))[2:-1]}')\n\nio.interactive()"
@@ -346,7 +375,7 @@ def generate_export_data(id):
 
         return file_data + '\nio.interactive()'
     except Exception as e:
-        raise Exception(f'Export error: {str(e)}')
+        print(f'Export error: {str(e)}')
     finally:
         session_db.close()
 
@@ -374,16 +403,19 @@ def export_text(id):
             os.remove(filepath)
 
 @app.route('/api/banned-patterns', methods=['GET'])
-# @site_login_required
 def get_banned_patterns():
     banned_patterns = []
+
+    service_name = request.args.get('service_name')
     
     for filename in os.listdir(EDITABLE_DIRECTORY):
         if filename.endswith('.json'):
             try:
                 with open(os.path.join(EDITABLE_DIRECTORY, filename), 'r') as f:
                     pattern = json.load(f)
-                    if pattern.get('action') == 'ban' and pattern.get('active', False):
+                    # if service_name is None or service_name != pattern.get('service'):
+                    #     continue
+                    if pattern.get('action') == 'ban' and pattern.get('active', False) and (service_name == pattern.get('service') or pattern.get('service') == 'ALL'):
                         banned_patterns.append(pattern)
             except Exception as e:
                 print(f"Error loading pattern {filename}: {e}")
@@ -394,37 +426,15 @@ def get_banned_patterns():
         'banned_patterns': banned_patterns
     })
 
-# @app.route('/api/new_stream', methods=['POST'])
-# def add_new_stream_to_db():
-#     try:
-#         data = json.loads(request.get_data(as_text=True))
-#         stream = []
-#         stream.append([data['request']['std'], data['request']['dataLen'], data['request']['data']])
-
-#         if data['response'] is not None:
-#             stream.append([data['response']['std'], data['response']['dataLen'], data['response']['data']])
-
-#         stream_to_db = base64.b64encode(str(json.dumps(stream)).encode())
-#         print(stream_to_db)
-#         insert_stream(stream_to_db)
-#     except:
-#         return '400', 400
-#     return '200', 200
-import json
-import base64
-from flask import request
-
 @app.route('/api/new_stream', methods=['POST'])
 def add_new_stream_to_db():
     try:
-        # Получаем и парсим JSON
         data = request.get_json()
         if data is None:
             return 'Invalid JSON', 400
         
         stream = []
         
-        # Обрабатываем request
         if 'request' not in data:
             return 'Missing request data', 400
             
@@ -435,7 +445,6 @@ def add_new_stream_to_db():
             req.get('data')
         ])
         
-        # Обрабатываем response (если есть)
         if 'response' in data and data['response'] is not None:
             resp = data['response']
             stream.append([
@@ -444,11 +453,10 @@ def add_new_stream_to_db():
                 resp.get('data')
             ])
         
-        # Кодируем в base64
         stream_str = json.dumps(stream)
         stream_to_db = base64.b64encode(stream_str.encode('utf-8')).decode('utf-8')
         
-        insert_stream(stream_to_db)
+        insert_stream(stream_to_db, data['service_name'])
         
     except json.JSONDecodeError:
         return 'Invalid JSON format', 400
@@ -461,4 +469,5 @@ def add_new_stream_to_db():
     return 'OK', 200
 
 if __name__ == "__main__":
+    Base.metadata.create_all(bind=engine)
     app.run(host='0.0.0.0', port=WEB_PORT)

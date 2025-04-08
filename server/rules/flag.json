@@ -1,4 +1,5 @@
 {
+    "service": "ALL",
     "pattern": "[A-Z0-9]{31}=",
     "flag": "flag",
     "std": 1,

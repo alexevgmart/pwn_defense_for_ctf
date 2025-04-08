@@ -104,6 +104,9 @@ header {
     gap: 5px;
     transition: background-color 0.2s;
 }
+#logout-btn {
+    background-color: #2c5f2d;
+}
 .btn:hover {
     background-color: var(--hover-color);
 }

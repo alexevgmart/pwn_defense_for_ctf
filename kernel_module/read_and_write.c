@@ -25,7 +25,7 @@
 
 typedef struct proto_msg {
     pid_t pid;
-    bool std; // 0 - stdin; 1 - stdout/stderr
+    uint8_t std; // 0 - stdin; 1 - stdout/stderr
     uint64_t counter;
     bool exited;
     uint64_t msg_len;
@@ -39,21 +39,23 @@ typedef struct current_process {
     struct current_process* prev;
 } current_process;
 
+char** target_files;
+int target_files_count = 0;
 current_process* processes = NULL;
-bool non_printable_block = true;
+bool non_printable_ban = true;
 
 static DECLARE_WAIT_QUEUE_HEAD(nl_wait_queue);
 static atomic_t data_ready = ATOMIC_INIT(0);
 
 struct sock *nl_sock = NULL;
 
-static char *target_file = NULL;
-module_param(target_file, charp, 0);
-MODULE_PARM_DESC(target_file, "The name of the file to search for");
+static char *target = NULL;
+module_param(target, charp, 0);
+MODULE_PARM_DESC(target, "Names of the files to search for, splitted by the \",\". Every filename should be unique");
 
-static char *server_monitor = NULL;
-module_param(server_monitor, charp, 0);
-MODULE_PARM_DESC(server_monitor, "The name of the server monitor file");
+static char *monitor = NULL;
+module_param(monitor, charp, 0);
+MODULE_PARM_DESC(monitor, "The name of the monitor file");
 
 static asmlinkage long (*orig_read)(const struct pt_regs *);
 static asmlinkage long (*orig_write)(const struct pt_regs *);
@@ -152,11 +154,14 @@ pid_t get_pid_by_name(const char *name) {
 }
 
 // Функция для отправки сообщения в пользовательское пространство
-static void netlink_send_msg(const char *data, uint64_t data_size, bool std, bool exited) {
+static void netlink_send_msg(const char *data, uint64_t data_size, uint8_t std, bool exited) {
     if (data_size == 0) {
         pr_info("Nothing to send");
         return;
     }
+
+    if (exited)
+        std = 0xff;
 
     struct sk_buff *skb_out;
     struct nlmsghdr *nlh;
@@ -168,6 +173,7 @@ static void netlink_send_msg(const char *data, uint64_t data_size, bool std, boo
     msg->counter = get_process_counter(current->pid);
     msg->exited = exited;
     msg->msg_len = data_size;
+    // pr_info("std: %02x\n", msg->std);
 
     inc_process(current->pid);
 
@@ -187,15 +193,16 @@ static void netlink_send_msg(const char *data, uint64_t data_size, bool std, boo
     //     printk(KERN_INFO "netlink: Error while sending skb to user\n");
     // }
 
-    pid_t server_monitor_pid = -1;
-    server_monitor_pid = get_pid_by_name(server_monitor);
-    if (server_monitor_pid == -1) {
-        printk(KERN_INFO "server monitor not found\n");
+    pid_t monitor_pid = -1;
+    monitor_pid = get_pid_by_name(monitor);
+    if (monitor_pid == -1) {
+        printk(KERN_INFO "monitor not found\n");
         return;
     }
     else {
-        pr_info("monitor pid: %d", server_monitor_pid);
-        res = nlmsg_unicast(nl_sock, skb_out, server_monitor_pid);
+        pr_info("monitor pid: %d", monitor_pid);
+        pr_info("std: %02x, exited: %d\n", msg->std, msg->exited);
+        res = nlmsg_unicast(nl_sock, skb_out, monitor_pid);
         // res = nlmsg_multicast(nl_sock, skb_out, 0, NETLINK_MY_GROUP, GFP_KERNEL);
         if (res < 0) {
             printk(KERN_INFO "netlink: Error while sending skb to user\n");
@@ -213,9 +220,9 @@ static void netlink_recv_msg(struct sk_buff *skb) {
     msg = (char *)nlmsg_data(nlh);
 
     if (*msg == 0xff)
-        non_printable_block = true;
+        non_printable_ban = true;
     else if (*msg == 0x7f)
-        non_printable_block = false;
+        non_printable_ban = false;
     else
         printk(KERN_INFO "netlink: Received message: %s\n", msg);
 
@@ -268,44 +275,50 @@ exit_read:
 
 next_check_read:
     ret_val = orig_read(regs);
-    if (fd == 0 && binary_path && target_file && strstr(binary_path, target_file)) {
-        if (ret_val <= 0) {
-            netlink_send_msg(binary_path, strlen(binary_path), false, true);
-            remove_process(current->pid);
+    if (fd == 0 && binary_path && target_files) {
+        for (int filename_index = 0; filename_index < target_files_count; filename_index++) {
+            if (strstr(binary_path, target_files[filename_index])) {
+                if (ret_val <= 0) {
+                    netlink_send_msg(binary_path, strlen(binary_path), 0, true);
+                    remove_process(current->pid);
 
-            if (send_sig(SIGKILL, current, 0))
-                pr_err("Failed to kill process\n");
+                    if (send_sig(SIGKILL, current, 0))
+                        pr_err("Failed to kill process\n");
 
-            kfree(binary_path);
-            return ret_val;
-        }
-
-        char *data = kzalloc(count, GFP_KERNEL);
-        if (data) {
-            memset(data, 0, count);
-
-            if (copy_from_user(data, buf, count)) {
-                pr_err("Failed to copy from user space\n");
-                kfree(data);
-                return ret_val;
-            }
-
-            netlink_send_msg(data, ret_val, false, false);
-            wait_for_user();
-
-            if (non_printable_block) {
-                for (int i = 0; i < ret_val; i++) {
-                    if ((data[i] < 0x20 && (data[i] < 0x07 || data[i] > 0x0d)) || data[i] > 0x7e) {
-                        data[i] = 0;
-                    }
+                    kfree(binary_path);
+                    return ret_val;
                 }
-            }
 
-            if (copy_to_user(buf, data, count)) {
-                pr_err("Failed to copy to user space\n");
-            }
+                char *data = kzalloc(count, GFP_KERNEL);
+                if (data) {
+                    memset(data, 0, count);
 
-            kfree(data);
+                    if (copy_from_user(data, buf, count)) {
+                        pr_err("Failed to copy from user space\n");
+                        kfree(data);
+                        return ret_val;
+                    }
+
+                    netlink_send_msg(data, ret_val, 0, false);
+                    wait_for_user();
+
+                    if (non_printable_ban) {
+                        for (int i = 0; i < ret_val; i++) {
+                            if ((data[i] < 0x20 && (data[i] < 0x07 || data[i] > 0x0d)) || data[i] > 0x7e) {
+                                data[i] = 0;
+                            }
+                        }
+                    }
+
+                    if (copy_to_user(buf, data, count)) {
+                        pr_err("Failed to copy to user space\n");
+                    }
+
+                    kfree(data);
+                }
+
+                break;
+            }
         }
     }
 
@@ -346,33 +359,44 @@ exit_write:
     }
 
 next_check_write:
-    if ((fd == 1 || fd == 2) && binary_path && target_file && strstr(binary_path, target_file)) {
-        char *data = kzalloc(count, GFP_KERNEL);
-        if (data) {
-            memset(data, 0, count);
+    if ((fd == 1 || fd == 2) && binary_path && target_files) {
+        bool found = false;
+        for (int filename_index = 0; filename_index < target_files_count; filename_index++) {
+            if (strstr(binary_path, target_files[filename_index])) {
+                found = true;
 
-            if (copy_from_user(data, buf, count)) {
-                pr_err("Failed to copy from user space\n");
-            }
-            
-            netlink_send_msg(data, count, true, false);
-            wait_for_user();
+                char *data = kzalloc(count, GFP_KERNEL);
+                if (data) {
+                    memset(data, 0, count);
 
-            if (non_printable_block) {
-                for (int i = 0; i < count; i++) {
-                    if ((data[i] < 0x20 && (data[i] < 0x07 || data[i] > 0x0d)) || data[i] > 0x7e) {
-                        data[i] = 0;
+                    if (copy_from_user(data, buf, count)) {
+                        pr_err("Failed to copy from user space\n");
                     }
+                    
+                    netlink_send_msg(data, count, 1, false);
+                    wait_for_user();
+
+                    if (non_printable_ban) {
+                        for (int i = 0; i < count; i++) {
+                            if ((data[i] < 0x20 && (data[i] < 0x07 || data[i] > 0x0d)) || data[i] > 0x7e) {
+                                data[i] = 0;
+                            }
+                        }
+                    }
+
+                    if (copy_to_user(buf, data, count)) {
+                        pr_err("Failed to copy to user space or data in .rodata\n");
+                    }
+
+                    kfree(data);
+                    ret_val = orig_write(regs);
                 }
-            }
 
-            if (copy_to_user(buf, data, count)) {
-                pr_err("Failed to copy to user space or data in .rodata\n");
+                break;
             }
-
-            kfree(data);
-            ret_val = orig_write(regs);
         }
+        if (!found)
+            ret_val = orig_write(regs);
     }
     else {
         ret_val = orig_write(regs);
@@ -403,12 +427,19 @@ static asmlinkage long hook_do_exit(long code) {
         }
     }
 
-    if (target_file && binary_path && strstr(binary_path, target_file)) {
-        netlink_send_msg(binary_path, strlen(binary_path), false, true);
-        remove_process(current->pid);
+    if (target_files && binary_path) {
+        for (int filename_index = 0; filename_index < target_files_count; filename_index++) {
+            pr_info("%s:%s", binary_path, target_files[filename_index]);
+            if (strstr(binary_path, target_files[filename_index])) {
+                netlink_send_msg(binary_path, strlen(binary_path), 0xff, true);
+                remove_process(current->pid);
 
-        if (send_sig(SIGKILL, current, 0))
-            pr_err("Failed to kill process\n");
+                if (send_sig(SIGKILL, current, 0))
+                    pr_err("Failed to kill process\n");
+
+                break;
+            }
+        }
     }
 
     kfree(binary_path);
@@ -433,10 +464,10 @@ asmlinkage int hook_send_signal(int sig, struct kernel_siginfo *info, struct tas
         }
     }
 
-    if ((sig == 15 || sig == 23 || sig == 14 || sig == 2) && target_file && binary_path && strstr(binary_path, target_file)) {
+    if ((sig == 15 || sig == 23 || sig == 14 || sig == 2) && target && binary_path && strstr(binary_path, target)) {
         pr_info("Received signal: %d (PID: %d)\n", sig, current->pid);
         pr_info("process stopped");
-        netlink_send_msg(binary_path, strlen(binary_path), false, true);
+        netlink_send_msg(binary_path, strlen(binary_path), 0, true);
         remove_process(current->pid);
 
         if (send_sig(SIGKILL, current, 0))
@@ -448,6 +479,46 @@ asmlinkage int hook_send_signal(int sig, struct kernel_siginfo *info, struct tas
     return orig_send_signal(sig, info, task, type);
 }
 
+char** split(const char* str, char delim, int* count) {
+    if (!str || !count) return NULL;
+
+    *count = 1;
+    const char* tmp = str;
+    while ((tmp = strchr(tmp, delim)) != NULL) {
+        (*count)++;
+        tmp++;
+    }
+
+    char** result = kmalloc(*count * sizeof(char*), GFP_KERNEL);
+    if (!result) return NULL;
+
+    int i = 0;
+    const char* start = str;
+    const char* end;
+    while ((end = strchr(start, delim)) != NULL) {
+        size_t len = end - start;
+        result[i] = kmalloc(len + 1, GFP_KERNEL);  // +1 для '\0'
+        if (!result[i]) goto error;
+        strncpy(result[i], start, len);
+        result[i][len] = '\0';
+        i++;
+        start = end + 1;
+    }
+
+    size_t last_len = strlen(start);
+    result[i] = kmalloc(last_len + 1, GFP_KERNEL);
+    if (!result[i]) goto error;
+    strncpy(result[i], start, last_len);
+    result[i][last_len] = '\0';
+
+    return result;
+
+error:
+    for (int j = 0; j < i; j++) kfree(result[j]);
+    kfree(result);
+    return NULL;
+}
+
 static struct ftrace_hook hooks[] = {
     HOOK("__x64_sys_read", hook_read, &orig_read),
     HOOK("__x64_sys_write", hook_write, &orig_write),
@@ -456,6 +527,12 @@ static struct ftrace_hook hooks[] = {
 };
 
 static int __init interception_init(void) {
+    target_files = split(target, ',', &target_files_count);
+    if (!target_files) {
+        pr_err("Split failed!\n");
+        return -ENOMEM;
+    }
+
     int err;
     err = fh_install_hooks(hooks, ARRAY_SIZE(hooks));
     if(err)
@@ -476,6 +553,12 @@ static int __init interception_init(void) {
 }
 
 static void __exit interception_exit(void) {
+    if (target_files) {
+        argv_free(target_files);
+        target_files = NULL;
+        target_files_count = 0;
+    }
+
     fh_remove_hooks(hooks, ARRAY_SIZE(hooks));
     netlink_kernel_release(nl_sock);
     printk(KERN_INFO "hook interception: unloaded\n");

@@ -4,7 +4,7 @@ import struct
 import json
 import os
 import re
-from sqlalchemy import create_engine, Column, Integer, Text, text
+from sqlalchemy import create_engine, Column, Integer, Text, text, String
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from dotenv import load_dotenv
@@ -21,6 +21,8 @@ class Streams(Base):
     __tablename__ = 'streams'
     id = Column(Integer, primary_key=True, autoincrement=True)
     stream = Column(Text, nullable=False)
+    service_name = Column(String(255), nullable=True)
+
 
 # Синхронный движок и сессия
 engine = create_engine(DB_URL, echo=True)
@@ -34,9 +36,9 @@ def load_banned_patterns():
             try:
                 with open(os.path.join(EDITABLE_DIRECTORY, filename), 'r') as f:
                     pattern = json.load(f)
-                    if not all(key in pattern for key in ['pattern', 'flag', 'std', 'active', 'action']):
+                    if not all(key in pattern for key in ['pattern', 'flag', 'std', 'active', 'action', 'service']):
                         continue
-                    if pattern['action'] != 'ban' or pattern['active'] != True:
+                    if pattern['action'] != 'ban' or pattern['active'] != True or pattern['service'] != 'PWN_ONLY' or pattern['service'] != 'ALL':
                         continue
                     try:
                         re.compile(pattern['pattern'])
@@ -50,10 +52,10 @@ def load_banned_patterns():
 def create_tables():
     Base.metadata.create_all(bind=engine)
 
-def insert_stream(stream):
+def insert_stream(stream, service_name):
     session = SessionLocal()
     try:
-        new_stream = Streams(stream=stream)
+        new_stream = Streams(stream=stream, service_name=service_name)
         session.add(new_stream)
         session.commit()
     finally:
@@ -71,11 +73,12 @@ def start_server(host='0.0.0.0', port=TCP_PORT):
         client_socket, client_address = server_socket.accept()
         # print(f"Подключен клиент: {client_address}")
         stream = []
+        binary_name = ''
 
         while True:
             try:
                 std_data = client_socket.recv(1)
-                if not std_data or std_data == b'\xff':
+                if not std_data: # сделать запись имени сервиса при \xff
                     break
 
                 data_len_data = client_socket.recv(8)
@@ -88,6 +91,10 @@ def start_server(host='0.0.0.0', port=TCP_PORT):
                 if not data:
                     break
 
+                if std_data == b'\xff':
+                    binary_name = data.decode()
+                    break
+
                 std = std_data[0]
                 data = base64.b64encode(data).decode()
                 stream.append([std, data_len, data])
@@ -97,7 +104,10 @@ def start_server(host='0.0.0.0', port=TCP_PORT):
                 break
 
         stream_to_db = base64.b64encode(str(json.dumps(stream)).encode())
-        insert_stream(stream_to_db)
+        if '/' in binary_name:
+            binary_name = binary_name.split('/')[len(binary_name.split('/')) - 1]
+        print(binary_name)
+        insert_stream(stream_to_db, binary_name)
 
         banned_patterns = load_banned_patterns()
         client_socket.send(bytes([len(banned_patterns)]))

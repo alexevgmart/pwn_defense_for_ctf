@@ -12,11 +12,16 @@ const container = document.getElementById('stream-data');
 let isBytesMode = false;
 
 function textToHex(text) {
-    const byteArray = new TextEncoder().encode(text);
-    const hexArray = Array.from(byteArray).map(byte => byte.toString(16).padStart(2, '0'));
-    const hexString = hexArray.join(' ');
+    // const byteArray = new TextEncoder().encode(text);
+    // const hexArray = Array.from(byteArray).map(byte => byte.toString(16).padStart(2, '0'));
+    // const hexString = hexArray.join(' ');
 
-    return hexString.replace(/0a/g, '0a<br>');
+    // return hexString.replace(/0a/g, '0a<br>');
+
+    return Array.from(text)
+        .map(char => char.charCodeAt(0).toString(16).padStart(2, '0'))
+        .join(' ')
+        .replace(/0a/g, '0a<br>');
 }
 
 function replaceNonPrintableChars(text) {
