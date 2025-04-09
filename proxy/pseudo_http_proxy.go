@@ -30,17 +30,17 @@ type Patterns struct {
 }
 
 func FindBannedPatterns(text string, std uint8, service_name string) bool {
-	url := fmt.Sprintf("http://127.0.0.1:9002/api/banned-patterns?service_name=%s", service_name)
+	url := fmt.Sprintf("http://%s/api/banned-patterns?service_name=%s", server_addr, service_name)
 	resp, err := http.Get(url)
 	if err != nil {
-		fmt.Printf("Error while request: %v\n", err)
+		fmt.Printf("Error while request: %s\n", err.Error())
 		return false
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Printf("Error in response: %v\n", err)
+		fmt.Printf("Error in response: %s\n", err.Error())
 		return false
 	}
 
@@ -48,7 +48,7 @@ func FindBannedPatterns(text string, std uint8, service_name string) bool {
 		var response Patterns
 		err := json.Unmarshal([]byte(body), &response)
 		if err != nil {
-			log.Fatal("Error while parsing JSON:", err)
+			log.Printf("Error while parsing JSON: %s", err.Error())
 		}
 		for _, pattern := range response.Patterns {
 			if strings.Contains(pattern.Pattern, "non_printable_bytes_block") {
@@ -80,14 +80,23 @@ type Service struct {
 	IsHttp      bool   `json:"is_http"`
 }
 
+var server_addr string
+
 func ParseServices() map[string]Service {
-	data, err := os.ReadFile("services.json")
+	url := fmt.Sprintf("http://%s/api/services", server_addr)
+	resp, err := http.Get(url)
 	if err != nil {
-		log.Fatalf("Couldn't read services.json file: %s", err.Error())
+		log.Fatalf("Couldn't get services from the server: %s", err.Error())
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatalf("Error in response: %s\n", err.Error())
 	}
 
 	var services map[string]Service
-	err = json.Unmarshal(data, &services)
+	err = json.Unmarshal([]byte(body), &services)
 	if err != nil {
 		log.Fatalf("Couldn't unmarshal json data: %s", err.Error())
 	}
@@ -200,7 +209,8 @@ func SendDataToServer(request *string, response *string, service_name string) {
 		return
 	}
 
-	resp, err := http.Post("http://127.0.0.1:9002/api/new_stream", "application/json", bytes.NewBuffer(jsonData))
+	url := fmt.Sprintf("http://%s/api/new_stream", server_addr)
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		fmt.Printf("Error while sending stream to server: %s", err.Error())
 		return
@@ -274,13 +284,15 @@ func handleConnection(conn net.Conn, service_data Service, service_name string) 
 		log.Printf("Error sending response: %v", err)
 		return
 	}
-
-	// log.Println("REQUEST ")
-	// log.Println(requestData.String())
-	// log.Println("RESPONSE")
-	// log.Println(responseData.String())
 }
 
 func main() {
+	if len(os.Args) < 3 {
+		fmt.Printf("Usage: %s <web_app_ip> <web_app_port>\n", os.Args[0])
+		return
+	}
+
+	server_addr = fmt.Sprintf("%s:%s", os.Args[1], os.Args[2])
+
 	StartPseudoProxy()
 }
