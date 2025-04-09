@@ -554,7 +554,10 @@ static int __init interception_init(void) {
 
 static void __exit interception_exit(void) {
     if (target_files) {
-        argv_free(target_files);
+        for (int i = 0; i < target_files_count; i++)
+            kfree(target_files[i]);
+        
+        kfree(target_files);
         target_files = NULL;
         target_files_count = 0;
     }
