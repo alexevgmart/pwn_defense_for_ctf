@@ -11,6 +11,7 @@ sudo apt install build-essential linux-headers-$(uname -r) kmod
 make
 sudo insmod read_and_write.ko target=имена_файлов_через_запятую monitor=имя_файла_в_который_скомпилировали_user.c
 ```
+Его нужно запускать на одном хосте со всеми сервисами
 
 ---
 
@@ -18,26 +19,23 @@ sudo insmod read_and_write.ko target=имена_файлов_через_запя
 ```bash
 ./user server_ip server_port
 ```
+Нужно запускать там же где и модуль ядра
 
 ---
 
-Модуль был дополнен программой в пользовательском пространстве, в которую приходит весь ввод и вывод (взаимодействие пользователя с программой). На данный момент все это дело дополнилось веб интерфейсом([server](https://github.com/alexevgmart/pwn_defense_for_ctf/tree/main/server)) для удобного взаимодействия, необходимые зависимости: `pip install flask sqlalchemy pymysql`.
-Запуск сервера:
+Веб интерфейс собирается через
 ```bash
-python3 -m venv server_env
-source server_env/bin/activate
-pip install flask sqlalchemy pymysql
-python3 main.py # запускает web_server.py и tcp_server.py одновременно
+docker-compose up -d --build
 ```
+Нужно запускать на отдельном хосте, чтобы не было доступа из общей сетки
 
 ---
 
 Для сервисов работающих по HTTP была написана небольшая прокси:
 ```bash
 go build .
-./pseudo_http_proxy
+./pseudo_http_proxy <web_app_ip> <web_app_port>
 ```
+На данный момент нужно запсукать на одном хосте с сервисами, потому что пока что нет прокси которая будет прокидывать не только http пакеты (из-за этого в services.json в [server/web_app](https://github.com/alexevgmart/pwn_defense_for_ctf/tree/main/server/web_app) пока что для не http сервисов `service_addr` нужно указывать `127.0.0.1`)
 
 ---
-
-Программа вряд ли подойдет для использования в реальных задачах, но будут примитивы которые как правило используются в CTF.

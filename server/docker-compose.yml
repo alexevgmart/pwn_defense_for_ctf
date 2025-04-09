@@ -1,0 +1,50 @@
+services:
+  mariadb:
+    image: mariadb:10.6
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${MYSQL_DB}
+      MARIADB_USER: ${MYSQL_USER}
+      MARIADB_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web_app:
+    build: ./web_app
+    ports:
+      - "${WEB_PORT}:${WEB_PORT}"
+    volumes:
+      - ./rules:/app/rules
+    environment:
+      DB_URL: "mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mariadb:3306/${MYSQL_DB}"
+    env_file:
+      - .env
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    restart: on-failure
+
+  tcp_server:
+    build: ./tcp_server
+    ports:
+      - "${TCP_PORT}:${TCP_PORT}"
+    volumes:
+      - ./rules:/app/rules
+    environment:
+      DB_URL: "mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mariadb:3306/${MYSQL_DB}"
+    env_file:
+      - .env
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    restart: on-failure
+
+volumes:
+  mariadb_data:

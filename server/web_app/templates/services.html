@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Services</title>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/services.css') }}">
+</head>
+<body>
+    <header>
+        <div class="header-left">
+            <h1>Services</h1>
+            <a href="/streams" class="btn">
+                <i class="material-icons">style</i> Streams
+            </a>
+            <a href="/editor" class="btn">
+                <i class="material-icons">code</i> Editor
+            </a>
+        </div>
+        <div class="header-right">
+            <button class="btn" id="logout-btn" title="Logout" style="padding: 5px 10px;">
+                <i class="material-icons">logout</i>
+            </button>
+        </div>
+    </header>
+
+    <div class="main-content">
+        <div class="service-list">
+            {% for service_name, service_data in services.items() %}
+                <a href="/streams?name={{ service_name }}" class="service-item">
+                    <span class="service-name">{{ service_name }}</span>
+                    <div class="service-details">
+                        <div class="detail-item">
+                            <span class="detail-label">Service Address:</span>
+                            <span class="detail-value">{{ service_data.service_addr }}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">In Port:</span>
+                            <span class="detail-value">{{ service_data.in_port }}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Service Port:</span>
+                            <span class="detail-value">{{ service_data.service_port }}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Is HTTP:</span>
+                            <span class="detail-value">{{ service_data.is_http }}</span>
+                        </div>
+                    </div>
+                </a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <script>
+        // Добавляем обработчик для кнопки выхода
+        document.getElementById('logout-btn').addEventListener('click', function() {
+            // Здесь должна быть логика выхода
+            window.location.href = '/logout';
+        });
+    </script>
+</body>
+</html>

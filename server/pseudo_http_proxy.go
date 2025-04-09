@@ -30,7 +30,6 @@ type Patterns struct {
 }
 
 func FindBannedPatterns(text string, std uint8, service_name string) bool {
-	fmt.Println(service_name)
 	url := fmt.Sprintf("http://127.0.0.1:9002/api/banned-patterns?service_name=%s", service_name)
 	resp, err := http.Get(url)
 	if err != nil {
