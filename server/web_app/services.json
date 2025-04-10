@@ -7,7 +7,7 @@
     },
     "chall" : {
         "service_addr": "192.168.0.141",
-        "in_port": 0,
+        "in_port": 7584,
         "service_port": 1337,
         "is_http": false
     },
@@ -19,7 +19,7 @@
     },
     "qwe" : {
         "service_addr": "192.168.0.141",
-        "in_port": 0,
+        "in_port": 6732,
         "service_port": 9000,
         "is_http": false
     }

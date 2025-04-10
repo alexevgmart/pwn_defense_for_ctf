@@ -11,7 +11,7 @@ sudo apt install build-essential linux-headers-$(uname -r) kmod
 make
 sudo insmod read_and_write.ko target=имена_файлов_через_запятую monitor=имя_файла_в_который_скомпилировали_user.c
 ```
-Его нужно запускать на одном хосте со всеми сервисами
+Его нужно запускать на одном хосте со всеми сервисами, до хоста не должно быть доступа из общей сетки
 
 ---
 
@@ -36,6 +36,7 @@ docker-compose up -d --build
 go build .
 ./pseudo_http_proxy <web_app_ip> <web_app_port>
 ```
-На данный момент нужно запсукать на одном хосте с сервисами, потому что пока что нет прокси которая будет прокидывать не только http пакеты (из-за этого в services.json в [server/web_app](https://github.com/alexevgmart/pwn_defense_for_ctf/tree/main/server/web_app) пока что для не http сервисов `service_addr` нужно указывать `127.0.0.1`)
+Нужно запускать на хосте который находится в общей сетке
+Настраивать перенаправление трафика нужно в services.json в [server/web_app](https://github.com/alexevgmart/pwn_defense_for_ctf/tree/main/server/web_app), там надо будет указать ip и порт хоста на котором находится настоящий сервис и порт на текущем хосте с прокси, на который будут приходить данные и затем направляться на хост с сервисами
 
 ---

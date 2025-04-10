@@ -12,6 +12,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
 type Pattern struct {
@@ -106,34 +107,36 @@ func ParseServices() map[string]Service {
 
 func StartPseudoProxy() {
 	for service_name, service_data := range ParseServices() {
-		if service_data.IsHttp {
-			go func() {
-				proxyAddr := fmt.Sprintf("0.0.0.0:%d", service_data.InPort)
-				listener, err := net.Listen("tcp", proxyAddr)
+		go func() {
+			proxyAddr := fmt.Sprintf("0.0.0.0:%d", service_data.InPort)
+			listener, err := net.Listen("tcp", proxyAddr)
+			if err != nil {
+				log.Fatalf("Couldn't start server: %s", err.Error())
+			}
+			defer listener.Close()
+
+			fmt.Printf(
+				"Proxying service \"%s\" (0.0.0.0:%d -> %s:%d)\n",
+				service_name,
+				service_data.InPort,
+				service_data.ServiceAddr,
+				service_data.ServicePort,
+			)
+
+			for {
+				conn, err := listener.Accept()
 				if err != nil {
-					log.Fatalf("Couldn't start server: %s", err.Error())
+					log.Printf("Couldn't accept connection: %s", err.Error())
+					continue
 				}
-				defer listener.Close()
 
-				fmt.Printf(
-					"Proxying service \"%s\" (0.0.0.0:%d -> %s:%d)\n",
-					service_name,
-					service_data.InPort,
-					service_data.ServiceAddr,
-					service_data.ServicePort,
-				)
-
-				for {
-					conn, err := listener.Accept()
-					if err != nil {
-						log.Printf("Couldn't accept connection: %s", err.Error())
-						continue
-					}
-
-					go handleConnection(conn, service_data, service_name)
+				if service_data.IsHttp {
+					go handleHttpConnection(conn, service_data, service_name)
+				} else {
+					go handleTcpConnection(conn, service_data, service_name)
 				}
-			}()
-		}
+			}
+		}()
 	}
 
 	select {}
@@ -218,7 +221,7 @@ func SendDataToServer(request *string, response *string, service_name string) {
 	resp.Body.Close()
 }
 
-func handleConnection(conn net.Conn, service_data Service, service_name string) {
+func handleHttpConnection(conn net.Conn, service_data Service, service_name string) {
 	defer conn.Close()
 
 	var requestData bytes.Buffer
@@ -283,6 +286,70 @@ func handleConnection(conn net.Conn, service_data Service, service_name string) 
 	if _, err := conn.Write(responseData.Bytes()); err != nil {
 		log.Printf("Error sending response: %v", err)
 		return
+	}
+}
+
+func ReadFromSocket(conn net.Conn, ch chan<- []byte) {
+	for {
+		var data bytes.Buffer
+		buf := make([]byte, 4096)
+		for {
+			n, err := conn.Read(buf)
+			if err != nil {
+				if err == io.EOF {
+					data.Write(buf[:n])
+					break
+				}
+				log.Printf("Error reading request: %s", err.Error())
+				return
+			}
+
+			data.Write(buf[:n])
+
+			if n < 4096 {
+				break
+			}
+		}
+		ch <- data.Bytes()
+	}
+}
+
+func handleTcpConnection(conn net.Conn, service_data Service, service_name string) {
+	defer conn.Close()
+
+	serviceAddr := fmt.Sprintf("%s:%d", service_data.ServiceAddr, service_data.ServicePort)
+	serviceConn, err := net.Dial("tcp", serviceAddr)
+	if err != nil {
+		log.Printf("Error connecting to service: %s", err.Error())
+		return
+	}
+	defer serviceConn.Close()
+
+	chanConn := make(chan []byte)
+	chanServiceConn := make(chan []byte)
+	go ReadFromSocket(conn, chanConn)
+	go ReadFromSocket(serviceConn, chanServiceConn)
+
+	timeout := time.NewTimer(5 * time.Second)
+	defer timeout.Stop()
+
+	for {
+		select {
+		case data := <-chanConn:
+			if _, err := serviceConn.Write(data); err != nil {
+				log.Printf("Error sending to service: %s", err.Error())
+				return
+			}
+			timeout.Reset(5 * time.Second)
+		case data := <-chanServiceConn:
+			if _, err := conn.Write(data); err != nil {
+				log.Printf("Error sending to service: %s", err.Error())
+				return
+			}
+			timeout.Reset(5 * time.Second)
+		case <-timeout.C:
+			return
+		}
 	}
 }
 
