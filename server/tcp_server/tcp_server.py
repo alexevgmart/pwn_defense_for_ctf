@@ -22,6 +22,7 @@ class Streams(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     stream = Column(Text, nullable=False)
     service_name = Column(String(255), nullable=True)
+    remote_addr = Column(String(255), nullable=True)
 
 
 # Синхронный движок и сессия
@@ -38,7 +39,7 @@ def load_banned_patterns():
                     pattern = json.load(f)
                     if not all(key in pattern for key in ['pattern', 'flag', 'std', 'active', 'action', 'service']):
                         continue
-                    if pattern['action'] != 'ban' or pattern['active'] != True or pattern['service'] != 'PWN_ONLY' or pattern['service'] != 'ALL':
+                    if pattern['action'] != 'ban' or pattern['active'] != True or pattern['service'] != 'KERNEL':
                         continue
                     try:
                         re.compile(pattern['pattern'])
@@ -55,7 +56,7 @@ def create_tables():
 def insert_stream(stream, service_name):
     session = SessionLocal()
     try:
-        new_stream = Streams(stream=stream, service_name=service_name)
+        new_stream = Streams(stream=stream, service_name=service_name, remote_addr='')
         session.add(new_stream)
         session.commit()
     finally:
@@ -115,8 +116,8 @@ def start_server(host='0.0.0.0', port=TCP_PORT):
         stream_to_db = base64.b64encode(str(json.dumps(stream)).encode())
         if '/' in binary_name:
             binary_name = binary_name.split('/')[len(binary_name.split('/')) - 1]
-        print(binary_name)
-        insert_stream(stream_to_db, binary_name)
+        # print(binary_name)
+        # insert_stream(stream_to_db, binary_name)
 
         banned_patterns = load_banned_patterns()
         client_socket.send(bytes([len(banned_patterns)]))

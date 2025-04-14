@@ -138,6 +138,26 @@ function saveFile() {
             return;
         }
     }
+
+    if (JSON.parse(editor.getValue())["service"] == "KERNEL" && JSON.parse(editor.getValue())["action"] != "ban") {
+        alert("KERNEL patterns may only be banned (change 'action' to 'ban')");
+        return;
+    }
+
+    if (JSON.parse(editor.getValue())["action"] != "mark" && JSON.parse(editor.getValue())["action"] != "ban") {
+        alert("'action' may only be 'ban' or 'mark'");
+        return;
+    }
+
+    if (JSON.parse(editor.getValue())["active"] != true && JSON.parse(editor.getValue())["active"] != false) {
+        alert("'active' may only be true or false");
+        return;
+    }
+
+    if (JSON.parse(editor.getValue())["std"] != null && JSON.parse(editor.getValue())["std"] !== 1 && JSON.parse(editor.getValue())["std"] !== 0) {
+        alert("'std' may only be null, 0 or 1");
+        return;
+    }
     
     fetch('/api/file', {
         method: 'POST',

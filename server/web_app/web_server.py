@@ -35,11 +35,12 @@ class Streams(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     stream = Column(Text, nullable=False)
     service_name = Column(String(255), nullable=True)
+    remote_addr = Column(String(255), nullable=True)
 
-def insert_stream(stream, service_name):
+def insert_stream(stream, service_name, remote_addr):
     session = SessionLocal()
     try:
-        new_stream = Streams(stream=stream, service_name=service_name)
+        new_stream = Streams(stream=stream, service_name=service_name, remote_addr=remote_addr)
         session.add(new_stream)
         session.commit()
     finally:
@@ -66,11 +67,11 @@ def load_patterns(service_name):
 
                 if pattern['service'] == 'ALL':
                     pass
-                elif pattern['service'] == 'PWN_ONLY':
-                    if service_name is not None and service_name != '':
-                        if services[service_name]['is_http']:
-                            print(f"Skipping PWN_ONLY pattern for HTTP service {service_name}")
-                            continue
+                # elif pattern['service'] == 'KERNEL':
+                #     if service_name is not None and service_name != '':
+                #         if services[service_name]['is_http']:
+                #             print(f"Skipping KERNEL pattern for HTTP service {service_name}")
+                #             continue
                 elif pattern['service'] != service_name:
                     continue 
 
@@ -141,8 +142,8 @@ def get_flags_in_stream(stream, service_name):
         decoded_str = str(b64d(base64_str))[2:-1]
 
         try:
-            if 'HTTP' in decoded_str.split('\\n')[1] and std == 0:
-                flags[decoded_str.split('\\n')[1].split('HTTP')[0]] = None
+            if 'HTTP' in decoded_str.split('\\n')[0] and std == 0:
+                flags[decoded_str.split('\\n')[0].split('HTTP')[0]] = None
 
             if 'HTTP' in decoded_str.split('\\n')[0] and std == 1:
                 flags[decoded_str.split('\\n')[0].split(' ')[1]] = None
@@ -274,6 +275,7 @@ def api_create_file():
     
     # Шаблон нового файла
     new_file_content = {
+        "service": "",
         "pattern": "",
         "flag": "",
         "std": None,
@@ -457,28 +459,35 @@ def add_new_stream_to_db():
         
         stream = []
         
-        if 'request' not in data:
+        if 'is_http' not in data:
             return 'Missing request data', 400
             
-        req = data['request']
-        stream.append([
-            req.get('std'),
-            req.get('dataLen'),
-            req.get('data')
-        ])
-        
-        if 'response' in data and data['response'] is not None:
-            resp = data['response']
+        if data['is_http']:
+            req = data['request']
             stream.append([
-                resp.get('std'),
-                resp.get('dataLen'),
-                resp.get('data')
+                req.get('std'),
+                req.get('dataLen'),
+                req.get('data')
             ])
-        
+            
+            if 'response' in data and data['response'] is not None:
+                resp = data['response']
+                stream.append([
+                    resp.get('std'),
+                    resp.get('dataLen'),
+                    resp.get('data')
+                ])
+        else:
+            for item in data['stream']:
+                stream.append([
+                    item.get('std'),
+                    item.get('dataLen'),
+                    item.get('data')
+                ])
+
         stream_str = json.dumps(stream)
         stream_to_db = base64.b64encode(stream_str.encode('utf-8')).decode('utf-8')
-        
-        insert_stream(stream_to_db, data['service_name'])
+        insert_stream(stream_to_db, data['service_name'], data['remote_addr'])
         
     except json.JSONDecodeError:
         return 'Invalid JSON format', 400

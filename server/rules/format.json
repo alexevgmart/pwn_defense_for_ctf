@@ -1,6 +1,6 @@
 {
-    "service": "PWN_ONLY",
-    "pattern": "%[0-9]+\\$",
+    "service": "chall",
+    "pattern": "%\\d+\\$",
     "flag": "format",
     "std": null,
     "active": true,
