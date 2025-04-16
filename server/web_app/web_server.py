@@ -181,24 +181,33 @@ def index():
         services = json.load(file)
     return render_template('services.html', services=services)
 
-@app.route('/streams', methods=['GET'])
+@app.route('/streams', methods=['GET']) # добавить сюда переключение по номеру страницы (500 стримов на одну страницу +-) 
 @site_login_required
 def get_streams():
     session_db = SessionLocal()
     try:
         service_name: str
-        if request.args.get('name') is None or request.args.get('name') == '':
-            result = session_db.execute(select(Streams.id, Streams.stream))
+        streams_data = []
+        if not request.args.get('name'):
+            result = session_db.query(Streams.id, Streams.stream, Streams.service_name) \
+                            .order_by(Streams.id.desc()) \
+                            .limit(500)
             service_name = None
         else:
-            result = session_db.execute(select(Streams.id, Streams.stream).where(Streams.service_name == request.args.get('name')))
             service_name = request.args.get('name')
+            result = session_db.query(Streams.id, Streams.stream) \
+                            .filter(Streams.service_name == service_name) \
+                            .order_by(Streams.id.desc()) \
+                            .limit(500)
 
-        streams = result.fetchall()
+        streams = result.all()
 
         streams_data = []
         for row in streams:
-            id, data = row
+            if not request.args.get('name'):
+                id, data, service_name = row
+            else:
+                id, data = row
             try:
                 result = get_flags_in_stream(data, service_name)
                 streams_data.append({
@@ -213,7 +222,7 @@ def get_streams():
                     "marks": []
                 })
 
-        return render_template('streams.html', streams=streams_data[::-1])
+        return render_template('streams.html', streams=streams_data)
     finally:
         session_db.close()
 
@@ -229,6 +238,36 @@ def get_stream_by_id(id):
         return "Stream not found", 404
     finally:
         session_db.close()
+
+@app.route('/should_check')
+@site_login_required
+def checker_or_sploit():
+    session_db = SessionLocal()
+    try:
+        result = session_db.query(Streams.id, Streams.stream, Streams.service_name) \
+                            .order_by(Streams.id.desc()) \
+                            .limit(3000)
+        streams = result.all()
+
+        streams_data = []
+        for row in streams:
+            id, data, service_name = row
+            try:
+                result = get_flags_in_stream(data, service_name)
+                streams_data.append({
+                    "id": id,
+                    "flags": result['flags'],
+                    "marks": result['marks']
+                })
+            except Exception as e:
+                streams_data.append({
+                    "id": id,
+                    "flags": [],
+                    "marks": []
+                })
+    except:
+        return "Database error", 500
+    return render_template('streams.html', streams=[item for item in streams_data if 'flag' in item['flags']])
 
 
 def get_json_files():
