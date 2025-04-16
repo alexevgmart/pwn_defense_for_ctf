@@ -11,6 +11,7 @@ import hashlib
 import base64
 from functools import wraps
 from dotenv import load_dotenv
+import traceback
 
 load_dotenv()
 
@@ -24,6 +25,9 @@ os.makedirs(EDITABLE_DIRECTORY, exist_ok=True)
 DB_URL = os.environ['DB_URL']
 WEB_PORT = int(os.environ.get('WEB_PORT', 8080))
 services = json.load(open('services.json', 'r'))
+
+MAX_PORT_DIFFERENCE = 10
+PORT_DIFFERENCE = 3
 
 
 engine = create_engine(DB_URL, echo=True)
@@ -338,7 +342,83 @@ def api_delete_file():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-def should_print(text):
+def http_to_python_requests(data):
+    headers, data = data.split('\n\n')
+
+    result_data = 'headers = {\n'
+    for header in headers.split('\n')[1:]:
+        if header.split(':')[0] == 'Host':
+            result_data += f"\t'{header.split(':')[0]}': f'{{sys.argv[1]}}:{header.split(':')[2]}',\n"
+            continue
+        if len(header.split(':')) > 2:
+            result_data += f"\t'{header.split(':')[0]}': '{":".join(header.split(':')[1:])}',\n"
+        else:
+            result_data += f"\t'{header.split(':')[0]}': '{header.split(': ')[1]}',\n"
+    result_data += '}\n'
+
+    if '=' in data:
+        result_data += 'data = {\n'
+        for param in data.split('&'):
+            result_data += f"\t'{param.split('=')[0]}': '{param.split('=')[1]}',\n"
+        result_data += '}\n'
+
+    method = headers.split('\n')[0].split(' ')[0]
+    route = headers.split('\n')[0].split(' ')[1]
+
+    if '=' in data:
+        match method:
+            case 'GET':
+                result_data += f'response = session.get(base_url + "{route}", headers=headers, data=data)\n'
+            case 'POST':
+                result_data += f'response = session.post(base_url + "{route}", headers=headers, data=data)\n'
+            case 'DELETE':
+                result_data += f'response = session.delete(base_url + "{route}", headers=headers, data=data)\n'
+            case 'PUT':
+                result_data += f'response = session.put(base_url + "{route}", headers=headers, data=data)\n'
+    else:
+        match method:
+            case 'GET':
+                result_data += f'response = session.get(base_url + "{route}", headers=headers)\n'
+            case 'POST':
+                result_data += f'response = session.post(base_url + "{route}", headers=headers)\n'
+            case 'DELETE':
+                result_data += f'response = session.delete(base_url + "{route}", headers=headers)\n'
+            case 'PUT':
+                result_data += f'response = session.put(base_url + "{route}", headers=headers)\n'
+
+    return result_data
+
+def process_http_export_data(queries):
+    sploit_data = 'import requests\nimport sys\n\n'
+    sploit_data += 'session = requests.Session()\n'
+    sploit_data += f"base_url = f'http://{{sys.argv[1]}}:{services[queries[0].service_name]['in_port']}'\n\n"
+
+    port_diff = int(queries[0].remote_addr.split(':')[1]) - int(queries[1].remote_addr.split(':')[1])
+    if port_diff > MAX_PORT_DIFFERENCE:
+        decoded_str = json.loads(b64d(queries[0].stream).decode())
+        decoded_str = str(b64d(decoded_str[0][2]))[2:-1].replace('\\r\\n', '\n')
+        sploit_data += http_to_python_requests(decoded_str)
+        sploit_data += 'print(response.text, flush=True)'
+        return sploit_data
+    
+    export_data = [queries[0]]
+    for i in range(len(queries) - 1):
+        tmp_diff = int(queries[i].remote_addr.split(':')[1]) - int(queries[i + 1].remote_addr.split(':')[1])
+        if tmp_diff - PORT_DIFFERENCE <= port_diff:
+            export_data.append(queries[i + 1])
+        else:
+            break
+    
+    for item in export_data[::-1]:
+        sploit_data += '\n'
+        decoded_str = json.loads(b64d(item.stream).decode())
+        decoded_str = str(b64d(decoded_str[0][2]))[2:-1].replace('\\r\\n', '\n')
+        sploit_data += http_to_python_requests(decoded_str)
+        sploit_data += '\n'
+    sploit_data += 'print(response.text, flush=True)'
+    return sploit_data
+
+def should_print(text, is_http=False):
     pattern_flag = r'[A-Z0-9]{31}='
     pattern_addr = r'0x[a-f0-9]+'
 
@@ -348,7 +428,10 @@ def should_print(text):
             non_printable = True
             break
 
-    return non_printable or re.search(pattern_flag, text.decode()) or re.search(pattern_addr, text.decode())
+    if not is_http:
+        return non_printable or re.search(pattern_flag, text.decode()) or re.search(pattern_addr, text.decode())
+    else:
+        return non_printable or re.search(pattern_flag, text.decode())
 
 def generate_export_data(id):
     session_db = SessionLocal()
@@ -360,14 +443,18 @@ def generate_export_data(id):
         process = json.loads(b64d(stream_info.stream).decode())
         if len(process) == 1 and process[0][0] == 1:
             raise Exception('Nothing to do')
+        
+        if re.search(r'[A-Z]+ /[^ ]* HTTP/', str(b64d(process[0][2]))[2:-1]) and process[0][0] == 0:
+            # return file_data + f"io.send(b'{str(b64d(process[0][2]))[2:-1]}')\n\nio.interactive()"
+            queries = session_db.query(Streams).filter(
+                Streams.service_name == stream_info.service_name,
+                Streams.remote_addr.like(f'%{stream_info.remote_addr.split(':')[0]}:%'),
+                Streams.id <= stream_info.id
+            ).order_by(Streams.id.desc()).limit(10).all()
+            return process_http_export_data(queries)
 
         file_data = 'import sys\nfrom pwn import *\n\n'
-        file_data += 'io = remote(sys.argv[1], target_port)\n# io = process(["./binary_name"])\n\n'
-
-        # изменить на python requests
-        if re.search(r'[A-Z]+ /[^ ]* HTTP/', str(b64d(process[0][2]))[2:-1]) and process[0][0] == 0:
-            data_to_send = '\n'.join(b64d(process[0][2]).decode().split('\n')[1:])
-            return file_data + f"io.send(b'{str(data_to_send.encode())[2:-1]}')\n\nio.interactive()"
+        file_data += f'io = remote(sys.argv[1], {services[stream_info.service_name]['in_port']})\n# io = process(["./binary_name"])\n\n'
 
         if len(process) == 1 and process[0][0] == 0:
             return file_data + f"io.send(b'{str(b64d(process[0][2]))[2:-1]}')\n\nio.interactive()"
@@ -396,6 +483,7 @@ def generate_export_data(id):
         return file_data + '\nio.interactive()'
     except Exception as e:
         print(f'Export error: {str(e)}')
+        traceback.print_exc() 
     finally:
         session_db.close()
 

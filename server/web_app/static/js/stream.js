@@ -11,6 +11,7 @@ function getIdFromPath() {
 const container = document.getElementById('stream-data');
 let isBytesMode = false;
 
+// преобразование из текста в байты не работает
 function textToHex(text) {
     // const byteArray = new TextEncoder().encode(text);
     // const hexArray = Array.from(byteArray).map(byte => byte.toString(16).padStart(2, '0'));
@@ -48,7 +49,7 @@ function sanitizeHTTPText(text) {
 }
 
 function escapeHtml(unsafe) {
-    // Безопасное экранирование HTML (защита от XSS)
+    // Безопасное экранирование HTML
     return unsafe
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")

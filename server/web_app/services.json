@@ -1,6 +1,6 @@
 {
     "some" : {
-        "service_addr": "192.168.0.141",
+        "service_addr": "127.0.0.1",
         "in_port": 9000,
         "service_port": 8080,
         "is_http": true
