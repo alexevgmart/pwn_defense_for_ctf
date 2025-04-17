@@ -135,11 +135,14 @@ def logout():
     return redirect(url_for('site_login'))
 
 
-def get_flags_in_stream(stream, service_name):
+def get_flags_in_stream(stream, service_name, should_check=False):
     patterns = load_patterns(service_name)  # Загружаем актуальные паттерны
     parsed_data = json.loads(b64d(stream).decode())
     flags = {}
     marks = {}
+
+    if should_check:
+        flags[f'service: {service_name}'], marks[f'service: {service_name}'] = None, None
 
     for item in parsed_data:
         std, length, base64_str = item
@@ -253,7 +256,7 @@ def checker_or_sploit():
         for row in streams:
             id, data, service_name = row
             try:
-                result = get_flags_in_stream(data, service_name)
+                result = get_flags_in_stream(data, service_name, True)
                 streams_data.append({
                     "id": id,
                     "flags": result['flags'],
