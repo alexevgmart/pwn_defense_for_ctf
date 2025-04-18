@@ -32,7 +32,7 @@ docker-compose up -d --build
 
 ---
 
-Для сервисов работающих по HTTP была написана небольшая прокси:
+Прокси:
 ```bash
 go build .
 ./pseudo_http_proxy <web_app_ip> <web_app_port>
