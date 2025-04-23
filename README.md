@@ -35,7 +35,7 @@ docker-compose up -d --build
 Прокси:
 ```bash
 go build .
-./pseudo_http_proxy <web_app_ip> <web_app_port>
+./proxy <web_app_ip> <web_app_port>
 ```
 Нужно запускать на хосте который находится в общей сетке<br>
 Настраивать перенаправление трафика нужно в services.json в [server/web_app](https://github.com/alexevgmart/pwn_defense_for_ctf/tree/main/server/web_app), там надо будет указать ip и порт хоста на котором находится настоящий сервис и порт на текущем хосте с прокси, на который будут приходить данные и затем направляться на хост с сервисами
