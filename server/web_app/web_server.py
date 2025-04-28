@@ -1,4 +1,5 @@
 from flask import Flask, render_template, send_file, request, redirect, url_for, session, jsonify, abort
+from flask_socketio import SocketIO, emit
 from sqlalchemy import create_engine, Column, Integer, Text, text, String
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
@@ -17,6 +18,7 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', os.urandom(32))
+socketio = SocketIO(app)
 
 SITE_PASSWORD = hashlib.sha256(os.environ['SITE_PASSWORD'].encode()).hexdigest()
 EDITOR_PASSWORD = hashlib.sha256(os.environ['EDITOR_PASSWORD'].encode()).hexdigest()
@@ -47,6 +49,7 @@ def insert_stream(stream, service_name, remote_addr):
         new_stream = Streams(stream=stream, service_name=service_name, remote_addr=remote_addr)
         session.add(new_stream)
         session.commit()
+        return new_stream.id
     finally:
         session.close()
 
@@ -617,7 +620,14 @@ def add_new_stream_to_db():
 
         stream_str = json.dumps(stream)
         stream_to_db = base64.b64encode(stream_str.encode('utf-8')).decode('utf-8')
-        insert_stream(stream_to_db, data['service_name'], data['remote_addr'])
+        stream_id = insert_stream(stream_to_db, data['service_name'], data['remote_addr'])
+
+        stream = {
+            'id': stream_id,
+            'service': data['service_name'],
+            'flags': get_flags_in_stream(stream_to_db, data['service_name'])['flags']
+        }
+        socketio.emit('new_stream', stream)
         
     except json.JSONDecodeError:
         return 'Invalid JSON format', 400
@@ -626,8 +636,8 @@ def add_new_stream_to_db():
     except Exception as e:
         print(f"Unexpected error: {str(e)}")
         return 'Internal server error', 500
-        
     return 'OK', 200
+
 
 if __name__ == "__main__":
     Base.metadata.create_all(bind=engine)

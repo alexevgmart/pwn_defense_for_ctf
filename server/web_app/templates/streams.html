@@ -6,6 +6,7 @@
     <title>Streams</title>
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/streams.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 </head>
 <body>
     <header>
@@ -42,12 +43,6 @@
         </div>
     </div>
 
-    <script>
-        // Добавляем обработчик для кнопки выхода
-        document.getElementById('logout-btn').addEventListener('click', function() {
-            // Здесь должна быть логика выхода
-            window.location.href = '/logout';
-        });
-    </script>
+    <script src="{{ url_for('static', filename='js/streams.js') }}"></script>
 </body>
 </html>
