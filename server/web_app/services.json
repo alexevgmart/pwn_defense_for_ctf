@@ -1,14 +1,23 @@
 {
-    "some" : {
+    "some": {
         "service_addr": "127.0.0.1",
         "in_port": 9000,
         "service_port": 8080,
-        "is_http": true
+        "is_http": true,
+        "protocol": "tcp"
     },
-    "chall" : {
+    "chall": {
         "service_addr": "127.0.0.1",
         "in_port": 9090,
         "service_port": 1337,
-        "is_http": false
+        "is_http": false,
+        "protocol": "tcp"
+    },
+    "test_udp": {
+        "service_addr": "127.0.0.1",
+        "in_port": 9990,
+        "service_port": 9999,
+        "is_http": false,
+        "protocol": "udp"
     }
 }

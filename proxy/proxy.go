@@ -35,6 +35,7 @@ type Service struct {
 	InPort      uint16 `json:"in_port"`
 	ServicePort uint16 `json:"service_port"`
 	IsHttp      bool   `json:"is_http"`
+	Protocol    string `json:"protocol"`
 }
 
 var server_addr string
@@ -132,37 +133,56 @@ func ParseServices() map[string]Service {
 
 func StartPseudoProxy() {
 	for service_name, service_data := range ParseServices() {
-		go func() {
-			proxyAddr := fmt.Sprintf("0.0.0.0:%d", service_data.InPort)
-			listener, err := net.Listen("tcp", proxyAddr)
-			if err != nil {
-				log.Fatalf("Couldn't start server: %s", err.Error())
-			}
-			defer listener.Close()
+		fmt.Printf(
+			"Proxying service \"%s\" (%s) (0.0.0.0:%d -> %s:%d)\n",
+			service_name,
+			service_data.Protocol,
+			service_data.InPort,
+			service_data.ServiceAddr,
+			service_data.ServicePort,
+		)
 
-			fmt.Printf(
-				"Proxying service \"%s\" (0.0.0.0:%d -> %s:%d)\n",
-				service_name,
-				service_data.InPort,
-				service_data.ServiceAddr,
-				service_data.ServicePort,
-			)
-
-			for {
-				conn, err := listener.Accept()
+		if strings.Contains(service_data.Protocol, "tcp") {
+			go func() {
+				proxyAddr := fmt.Sprintf("0.0.0.0:%d", service_data.InPort)
+				listener, err := net.Listen("tcp", proxyAddr)
 				if err != nil {
-					log.Printf("Couldn't accept connection: %s", err.Error())
-					continue
+					log.Fatalf("Couldn't start server: %s", err.Error())
+				}
+				defer listener.Close()
+
+				for {
+					conn, err := listener.Accept()
+					if err != nil {
+						log.Printf("Couldn't accept connection: %s", err.Error())
+						continue
+					}
+
+					go handleTcpConnection(conn, service_data, service_name)
+					// if service_data.IsHttp {
+					// 	go handleHttpConnection(conn, service_data, service_name)
+					// } else {
+					// 	go handleTcpConnection(conn, service_data, service_name)
+					// }
+				}
+			}()
+		} else if strings.Contains(service_data.Protocol, "udp") {
+			go func() {
+				proxyAddr := fmt.Sprintf("0.0.0.0:%d", service_data.InPort)
+				udpAddr, err := net.ResolveUDPAddr("udp", proxyAddr)
+				if err != nil {
+					log.Printf("ResolveUDPAddr failed: %s\n", err.Error())
 				}
 
-				go handleTcpConnection(conn, service_data, service_name)
-				// if service_data.IsHttp {
-				// 	go handleHttpConnection(conn, service_data, service_name)
-				// } else {
-				// 	go handleTcpConnection(conn, service_data, service_name)
-				// }
-			}
-		}()
+				conn, err := net.ListenUDP("udp", udpAddr)
+				if err != nil {
+					log.Printf("ListenUDP failed: %s\n", err.Error())
+				}
+				defer conn.Close()
+
+				go handleUdpConnection(conn, service_data, service_name)
+			}()
+		}
 	}
 
 	select {}
@@ -332,7 +352,7 @@ func SendTcpDataToServer(data []StreamData, service_name string, remote_addr str
 // 	}
 // }
 
-func ReadFromSocket(conn net.Conn, ch chan<- []byte) {
+func ReadFromTcpSocket(conn net.Conn, ch chan<- []byte) {
 	for {
 		var data bytes.Buffer
 		buf := make([]byte, 4096)
@@ -376,8 +396,8 @@ func handleTcpConnection(conn net.Conn, service_data Service, service_name strin
 
 	chanConn := make(chan []byte)
 	chanServiceConn := make(chan []byte)
-	go ReadFromSocket(conn, chanConn)
-	go ReadFromSocket(serviceConn, chanServiceConn)
+	go ReadFromTcpSocket(conn, chanConn)
+	go ReadFromTcpSocket(serviceConn, chanServiceConn)
 
 	timeout := time.NewTimer(5 * time.Second)
 	defer timeout.Stop()
@@ -469,6 +489,10 @@ func handleTcpConnection(conn net.Conn, service_data Service, service_name strin
 			return
 		}
 	}
+}
+
+func handleUdpConnection(conn *net.UDPConn, service_data Service, service_name string) {
+
 }
 
 func main() {
